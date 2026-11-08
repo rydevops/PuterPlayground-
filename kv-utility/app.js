@@ -13,11 +13,18 @@
     fileInput: $('file-input'), toast: $('toast'), authBtn: $('auth-btn'), userLabel: $('user-label'),
     installBtn: $('install-btn'), banner: $('update-banner'), updateReload: $('update-reload'),
     updateDismiss: $('update-dismiss'), checkUpdate: $('check-update'), version: $('app-version'),
+    tabStores: $('tab-stores'), tabFiles: $('tab-files'), paneStores: $('pane-stores'), paneFiles: $('pane-files'),
+    pathForm: $('path-form'), fsPath: $('fs-path'), upBtn: $('up-btn'), fsFilter: $('fs-filter'),
+    fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'), source: $('source'),
   };
 
   const DRAFT_KEY = 'kvutil:draft';
   const PREFS_KEY = 'kvutil:prefs';
-  const state = { keys: [], loadedName: null, savedText: '', parseError: null, view: 'text' };
+  const state = {
+    keys: [], loadedName: null, savedText: '', parseError: null, view: 'text',
+    source: '', files: [], cwd: null, loadedFile: null, username: null,
+  };
+  const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
   /* ---------- small utils ---------- */
   const store = {
@@ -77,6 +84,7 @@
       els.authBtn.textContent = 'Sign out';
       try {
         const user = await puter.auth.getUser();
+        state.username = user?.username || null;
         els.userLabel.textContent = user?.username ? `@${user.username}` : '';
       } catch { els.userLabel.textContent = ''; }
     } else {
@@ -172,6 +180,9 @@
         await puter.kv.set(name, payload);
         state.loadedName = name;
         state.savedText = text;
+        state.loadedFile = null;
+        setSource(`KV store: ${name}`);
+        renderFiles();
         if (!state.keys.includes(name)) {
           state.keys.push(name);
           state.keys.sort((a, b) => a.localeCompare(b));
@@ -194,7 +205,7 @@
       try {
         await puter.kv.del(name);
         state.keys = state.keys.filter((k) => k !== name);
-        if (state.loadedName === name) state.loadedName = null;
+        if (state.loadedName === name) { state.loadedName = null; setSource(''); }
         state.savedText = '';
         renderList();
         updateStatus();
@@ -254,13 +265,165 @@
       : '';
   }
 
+  /* ---------- Puter files (read-only) ---------- */
+  function expandHome(path) {
+    path = (path || '').trim() || '~';
+    if (state.username && (path === '~' || path.startsWith('~/'))) path = `/${state.username}${path.slice(1)}`;
+    if (path.length > 1) path = path.replace(/\/+$/, '');
+    return path;
+  }
+
+  function parentOf(path) {
+    if (path === '/' || !path.includes('/')) return '/';
+    const i = path.lastIndexOf('/');
+    return i <= 0 ? '/' : path.slice(0, i);
+  }
+
+  function joinPath(dir, name) {
+    return dir === '/' ? `/${name}` : `${dir}/${name}`;
+  }
+
+  async function listDir(path = els.fsPath.value) {
+    if (!(await ensureSignedIn())) return;
+    if (!state.username) await refreshAuth();
+    const target = expandHome(path);
+    els.fileList.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: 'Loading…' }));
+    try {
+      const items = await puter.fs.readdir(target);
+      state.cwd = target;
+      els.fsPath.value = target;
+      state.files = (items || []).map((it) => ({
+        name: it.name,
+        path: it.path || joinPath(target, it.name),
+        isDir: !!(it.is_dir ?? it.isDirectory),
+        size: it.size ?? null,
+      })).sort((a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name));
+      els.fsFilter.value = '';
+      store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), fsPath: target });
+    } catch (e) {
+      state.files = [];
+      toast(`Cannot open folder "${target}": ${errMsg(e)}`, true);
+    }
+    renderFiles();
+  }
+
+  function renderFiles() {
+    const q = els.fsFilter.value.trim().toLowerCase();
+    const files = q ? state.files.filter((f) => f.name.toLowerCase().includes(q)) : state.files;
+    els.fileList.replaceChildren();
+    if (!files.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = state.cwd === null ? 'Enter a folder and click “Go”.' : (state.files.length ? 'No files match the filter.' : 'This folder is empty.');
+      els.fileList.append(li);
+    }
+    for (const f of files) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = f.path;
+      if (f.isDir) b.classList.add('dir');
+      if (f.path === state.loadedFile) b.classList.add('current');
+      const icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.textContent = f.isDir ? '📁' : '📄';
+      b.append(icon, document.createTextNode(f.name));
+      if (!f.isDir && f.size !== null) {
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = formatBytes(f.size);
+        b.prepend(meta);
+      }
+      b.addEventListener('click', () => (f.isDir ? listDir(f.path) : openFile(f.path)));
+      li.append(b);
+      els.fileList.append(li);
+    }
+    els.fileCount.textContent = state.cwd === null ? '' : `${files.length} of ${state.files.length} item${state.files.length === 1 ? '' : 's'}`;
+  }
+
+  /** Turn a Blob into editor text; JSON is pretty-printed, binary is rejected. */
+  async function blobToText(blob, label) {
+    if (blob.size > MAX_FILE_BYTES) throw new Error(`${label} is ${formatBytes(blob.size)}; the limit is ${formatBytes(MAX_FILE_BYTES)}`);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = null; }
+    if (text === null || text.includes('\u0000')) throw new Error(`${label} looks like a binary file and can't be shown as text`);
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    try { return JSON.stringify(JSON.parse(text), null, indentUnit()); } catch { return text; }
+  }
+
+  function loadFileText(text, path) {
+    const name = path.split('/').pop();
+    const suggest = (p) => (p ? p.split('/').pop().replace(/\.[^.]+$/, '') : '');
+    const current = els.storeName.value.trim();
+    // Suggest a store name unless the user typed their own.
+    const replaceName = !current || current === suggest(state.loadedFile);
+    setEditor(text, null, `File: ${path}`);
+    state.loadedFile = path;
+    if (replaceName) els.storeName.value = suggest(path);
+    onEditorChange();
+    renderFiles();
+    toast(`Opened ${name} — Save to store it in the KV store`);
+  }
+
+  async function openFile(path) {
+    if (isDirty() && !confirm('You have unsaved changes. Discard them and open this file?')) return;
+    if (!(await ensureSignedIn())) return;
+    try {
+      const blob = await puter.fs.read(path);
+      loadFileText(await blobToText(blob, path.split('/').pop()), path);
+    } catch (e) {
+      toast(`Cannot read file: ${errMsg(e)}`, true);
+    }
+  }
+
+  async function pickFile() {
+    if (isDirty() && !confirm('You have unsaved changes. Discard them and open another file?')) return;
+    if (!(await ensureSignedIn())) return;
+    try {
+      let item = await puter.ui.showOpenFilePicker();
+      if (Array.isArray(item)) item = item[0];
+      if (!item) return;
+      const blob = item.read ? await item.read() : await puter.fs.read(item.path);
+      loadFileText(await blobToText(blob, item.name), item.path || item.name);
+      if (item.path) {
+        const dir = parentOf(item.path);
+        if (dir !== state.cwd) listDir(dir);
+      }
+    } catch (e) {
+      if (e?.name === 'AbortError' || /cancel/i.test(errMsg(e))) return;
+      toast(`Cannot open file: ${errMsg(e)}`, true);
+    }
+  }
+
+  function setSideTab(tab) {
+    const files = tab === 'files';
+    els.paneStores.hidden = files;
+    els.paneFiles.hidden = !files;
+    els.tabStores.classList.toggle('active', !files);
+    els.tabFiles.classList.toggle('active', files);
+    els.tabStores.setAttribute('aria-selected', String(!files));
+    els.tabFiles.setAttribute('aria-selected', String(files));
+    store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), tab });
+    if (files && state.cwd === null && window.puter && puter.auth.isSignedIn()) listDir();
+  }
+
   /* ---------- Editor ---------- */
-  function setEditor(text, loadedName) {
+  function setEditor(text, loadedName, source = loadedName ? `KV store: ${loadedName}` : '') {
     els.editor.value = text;
     state.loadedName = loadedName;
     state.savedText = text;
+    if (!source.startsWith('File:')) state.loadedFile = null;
+    setSource(source);
     onEditorChange();
     renderList();
+    renderFiles();
+  }
+
+  function setSource(source) {
+    state.source = source;
+    els.source.textContent = source;
+    els.source.title = source;
   }
 
   function isDirty() {
@@ -400,7 +563,7 @@
   }
 
   const saveDraft = debounce(() => {
-    store.set(DRAFT_KEY, { name: els.storeName.value, text: els.editor.value, loadedName: state.loadedName, savedText: state.savedText, mode: els.saveMode.value });
+    store.set(DRAFT_KEY, { name: els.storeName.value, text: els.editor.value, loadedName: state.loadedName, savedText: state.savedText, mode: els.saveMode.value, source: state.source, loadedFile: state.loadedFile });
   }, 400);
 
   const debouncedValidate = debounce(() => {
@@ -577,6 +740,12 @@
   els.newBtn.addEventListener('click', newStore);
   els.refreshBtn.addEventListener('click', listStores);
   els.filter.addEventListener('input', renderList);
+  els.tabStores.addEventListener('click', () => setSideTab('stores'));
+  els.tabFiles.addEventListener('click', () => setSideTab('files'));
+  els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });
+  els.upBtn.addEventListener('click', () => listDir(parentOf(state.cwd ?? expandHome(els.fsPath.value))));
+  els.fsFilter.addEventListener('input', renderFiles);
+  els.pickFileBtn.addEventListener('click', pickFile);
   els.storeName.addEventListener('keydown', (e) => { if (e.key === 'Enter') getStore(); });
   els.storeName.addEventListener('input', saveDraft);
   els.saveMode.addEventListener('change', saveDraft);
@@ -584,7 +753,7 @@
   els.viewTree.addEventListener('click', () => setView('tree'));
   els.indent.addEventListener('change', () => {
     els.editor.style.tabSize = els.indent.value === 'tab' ? 4 : els.indent.value;
-    store.set(PREFS_KEY, { indent: els.indent.value });
+    store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), indent: els.indent.value });
   });
 
   els.fileInput.addEventListener('change', async () => {
@@ -602,7 +771,11 @@
     if (puter.auth.isSignedIn()) {
       puter.auth.signOut();
       state.keys = [];
+      state.files = [];
+      state.cwd = null;
+      state.username = null;
       renderList();
+      renderFiles();
       await refreshAuth();
       toast('Signed out');
     } else if (await ensureSignedIn()) {
@@ -718,7 +891,7 @@
 
   els.updateReload.addEventListener('click', () => {
     saveDraft();
-    store.set(DRAFT_KEY, { name: els.storeName.value, text: els.editor.value, loadedName: state.loadedName, savedText: state.savedText, mode: els.saveMode.value });
+    store.set(DRAFT_KEY, { name: els.storeName.value, text: els.editor.value, loadedName: state.loadedName, savedText: state.savedText, mode: els.saveMode.value, source: state.source, loadedFile: state.loadedFile });
     state.reloadingForUpdate = true;
     if (waitingWorker) waitingWorker.postMessage({ type: 'SKIP_WAITING' });
     else location.reload();
@@ -737,12 +910,19 @@
       els.editor.value = draft.text || '';
       state.loadedName = draft.loadedName ?? null;
       state.savedText = draft.savedText ?? '';
+      state.loadedFile = draft.loadedFile ?? null;
+      setSource(draft.source || '');
     }
+    if (prefs.fsPath) els.fsPath.value = prefs.fsPath;
+    if (prefs.tab === 'files') setSideTab('files');
     onEditorChange();
     renderList();
   }
 
   restore();
   initServiceWorker();
-  refreshAuth().then((signedIn) => { if (signedIn) listStores(); });
+  refreshAuth().then((signedIn) => {
+    if (!signedIn) return;
+    listStores();
+  });
 })();
