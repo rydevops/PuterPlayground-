@@ -236,3 +236,10 @@ body {
   .footer { padding: 0 12px 10px; }
   .view-toggle { margin-left: 0; }
 }
+
+/* App selector (this app vs another app's data) */
+.app-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; }
+.app-bar select { flex: 1; min-width: 0; }
+.app-note { margin: 2px 12px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-note:empty { display: none; }
+.chip.chip-app { border-color: var(--accent); color: var(--accent); }
