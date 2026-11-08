@@ -59,9 +59,15 @@
           <input id="fs-path" class="input mono" type="text" value="~" spellcheck="false" autocomplete="off" aria-label="Folder path">
           <button class="btn btn-sm" type="submit">Go</button>
         </form>
-        <input id="fs-filter" class="input" type="search" placeholder="Filter files" autocomplete="off">
+        <div id="quick-folders" class="quick-folders" aria-label="Quick folders"></div>
+        <nav id="crumbs" class="crumbs" aria-label="Current folder"></nav>
+        <div class="search-bar">
+          <input id="fs-filter" class="input" type="search" placeholder="Filter, or Enter to search subfolders" autocomplete="off" aria-label="Filter or search files">
+          <button id="search-btn" class="btn btn-sm" type="button" title="Search this folder and all its subfolders">Search subfolders</button>
+        </div>
         <ul id="file-list" class="store-list" aria-live="polite"></ul>
         <p id="file-count" class="muted small"></p>
+        <div id="fs-hint" class="fs-hint"></div>
       </div>
     </aside>
 

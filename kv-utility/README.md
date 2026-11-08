@@ -8,10 +8,15 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
 
 - **Stores:** type a store name, then **Get**, **Save**, **New** or **Delete**. **↻ List** lists every store, and the filter box takes a substring or a glob (`config:*`).
 - **Puter files (read-only):** the **Files** tab in the sidebar browses your Puter cloud storage.
-  - Type a folder path (`~` is your home folder) and click **Go**, use **↑** to go up, or click a folder to open it.
-  - Click a file to open it in the editor. JSON is pretty-printed, other text opens as-is, and binary files or files over 10 MB are refused.
-  - **Pick file…** opens Puter's own file picker instead.
+  - **Quick folders** (Home, Desktop, Documents, Pictures, Videos, Public, AppData), clickable **breadcrumbs**, a path box (`~` is your home folder) and **↑**.
+  - **Search subfolders:** type part of a name and press Enter. Matching ignores case, spaces, `-` and `_`, so `tropical merge` also finds `Tropical_Merge`. Searching from Home also covers Desktop, Documents, Pictures and Videos.
+  - Click a file to open it in the editor. JSON is pretty-printed, other text opens as-is, and binary files or files over 10 MB are refused. **Pick file…** opens Puter's own file picker instead.
   - The status bar shows where the editor content came from. **Save** copies a JSON file into the KV store under the suggested store name. Files themselves are never changed.
+
+  **Folder access:** Puter only lets a website read your Desktop, Documents, Pictures, Videos or any other folder after you allow it. Until then those folders can look empty or be missing, and **folders you create on the Puter desktop live in `~/Desktop`**.
+  - Opening one of those folders asks for access automatically.
+  - A search lists the folders it couldn't check, with a **Grant access and search again** button.
+  - **Request access to this folder** below the list covers any other folder.
 - **JSON editor:**
   - Line numbers, plus a cursor position and size readout.
   - Live validation. Click the red pill to jump to the error.
