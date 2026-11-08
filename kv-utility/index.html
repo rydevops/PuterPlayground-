@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Puter KV Utility</title>
+  <meta name="description" content="Browse, edit and save JSON stores in the Puter.js key-value store.">
+  <meta name="theme-color" content="#1f6feb">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://js.puter.com/v2/"></script>
+</head>
+<body>
+  <div id="update-banner" class="banner" hidden>
+    <span>A new version of KV Utility is available.</span>
+    <button id="update-reload" class="btn btn-primary btn-sm">Update now</button>
+    <button id="update-dismiss" class="btn btn-ghost btn-sm" aria-label="Dismiss">Later</button>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="28" height="28">
+      <h1>KV Utility</h1>
+    </div>
+    <div class="topbar-actions">
+      <span id="user-label" class="muted"></span>
+      <button id="auth-btn" class="btn btn-sm">Sign in to Puter</button>
+      <button id="install-btn" class="btn btn-sm" hidden>Install</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Store list -->
+    <aside class="panel sidebar">
+      <div class="panel-head">
+        <h2>Stores</h2>
+        <button id="refresh-btn" class="btn btn-sm" title="List stores">↻ List</button>
+      </div>
+      <input id="filter" class="input" type="search" placeholder="Filter (e.g. config:*)" autocomplete="off">
+      <ul id="store-list" class="store-list" aria-live="polite"></ul>
+      <p id="store-count" class="muted small"></p>
+    </aside>
+
+    <!-- Editor -->
+    <section class="panel editor-panel">
+      <div class="store-bar">
+        <label for="store-name" class="sr-only">Store name</label>
+        <input id="store-name" class="input mono" type="text" placeholder="Store name (key)" autocomplete="off" spellcheck="false">
+        <select id="save-mode" class="input" title="How the value is written to the store">
+          <option value="value">Save as JSON value</option>
+          <option value="string">Save as JSON text (string)</option>
+        </select>
+        <button id="get-btn" class="btn">Get</button>
+        <button id="save-btn" class="btn btn-primary">Save</button>
+        <button id="new-btn" class="btn" title="Start a new empty store">New</button>
+        <button id="delete-btn" class="btn btn-danger" title="Delete this store">Delete</button>
+      </div>
+
+      <div class="toolbar" role="toolbar" aria-label="JSON tools">
+        <div class="group">
+          <button data-action="format" class="btn btn-sm" title="Format (Ctrl+Shift+F)">Format</button>
+          <select id="indent" class="input input-sm" title="Indentation">
+            <option value="2">2 spaces</option>
+            <option value="4">4 spaces</option>
+            <option value="tab">Tabs</option>
+          </select>
+          <button data-action="minify" class="btn btn-sm">Minify</button>
+          <button data-action="sort" class="btn btn-sm" title="Sort object keys recursively">Sort keys</button>
+        </div>
+        <div class="group">
+          <button data-action="stringify" class="btn btn-sm" title="Wrap JSON as an escaped string">Escape</button>
+          <button data-action="parse" class="btn btn-sm" title="Unwrap an escaped JSON string">Unescape</button>
+        </div>
+        <div class="group">
+          <button data-action="copy" class="btn btn-sm">Copy</button>
+          <button data-action="import" class="btn btn-sm">Import…</button>
+          <button data-action="download" class="btn btn-sm">Download</button>
+          <input id="file-input" type="file" accept=".json,application/json,text/plain" hidden>
+        </div>
+        <div class="group view-toggle" role="tablist">
+          <button id="view-text" class="btn btn-sm active" role="tab" aria-selected="true">Text</button>
+          <button id="view-tree" class="btn btn-sm" role="tab" aria-selected="false">Tree</button>
+        </div>
+      </div>
+
+      <div class="editor-wrap" id="text-view">
+        <pre id="gutter" class="gutter mono" aria-hidden="true">1</pre>
+        <textarea id="editor" class="editor mono" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" placeholder='{ "hello": "world" }'></textarea>
+      </div>
+      <div id="tree-view" class="tree-view mono" hidden></div>
+
+      <div class="statusbar">
+        <span id="validity" class="status-pill">Empty</span>
+        <span id="cursor-pos" class="muted small"></span>
+        <span id="size" class="muted small"></span>
+        <span id="dirty" class="muted small"></span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer muted small">
+    <span id="app-version">v—</span>
+    <button id="check-update" class="link">Check for updates</button>
+    <span class="sep">·</span>
+    <span>Shortcuts: Ctrl+S save · Ctrl+Enter get · Ctrl+Shift+F format</span>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
