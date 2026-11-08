@@ -16,13 +16,14 @@
     tabStores: $('tab-stores'), tabFiles: $('tab-files'), paneStores: $('pane-stores'), paneFiles: $('pane-files'),
     pathForm: $('path-form'), fsPath: $('fs-path'), upBtn: $('up-btn'), fsFilter: $('fs-filter'),
     fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'), source: $('source'),
+    quickFolders: $('quick-folders'), crumbs: $('crumbs'), searchBtn: $('search-btn'), fsHint: $('fs-hint'),
   };
 
   const DRAFT_KEY = 'kvutil:draft';
   const PREFS_KEY = 'kvutil:prefs';
   const state = {
     keys: [], loadedName: null, savedText: '', parseError: null, view: 'text',
-    source: '', files: [], cwd: null, loadedFile: null, username: null,
+    source: '', files: [], cwd: null, loadedFile: null, username: null, search: null, listError: null,
   };
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -266,10 +267,25 @@
   }
 
   /* ---------- Puter files (read-only) ---------- */
+  // Puter only lets a website read the user's special folders (and any other path)
+  // after the user grants access, so listings can look incomplete until then.
+  const SPECIAL_FOLDERS = ['Desktop', 'Documents', 'Pictures', 'Videos'];
+  const QUICK_FOLDERS = ['~', '~/Desktop', '~/Documents', '~/Pictures', '~/Videos', '~/Public', '~/AppData'];
+  const SEARCH_MAX_DEPTH = 10;
+  const SEARCH_MAX_SCANNED = 50000;
+  const SEARCH_MAX_RESULTS = 500;
+
   function expandHome(path) {
     path = (path || '').trim() || '~';
     if (state.username && (path === '~' || path.startsWith('~/'))) path = `/${state.username}${path.slice(1)}`;
     if (path.length > 1) path = path.replace(/\/+$/, '');
+    return path;
+  }
+
+  /** Show /<user>/... as ~/... for readability. */
+  function prettyPath(path) {
+    const home = state.username ? `/${state.username}` : null;
+    if (home && (path === home || path.startsWith(`${home}/`))) return `~${path.slice(home.length)}`;
     return path;
   }
 
@@ -283,62 +299,371 @@
     return dir === '/' ? `/${name}` : `${dir}/${name}`;
   }
 
-  async function listDir(path = els.fsPath.value) {
+  function toEntry(it, dir) {
+    return {
+      name: it.name,
+      path: it.path || joinPath(dir, it.name),
+      isDir: !!(it.is_dir ?? it.isDirectory),
+      size: it.size ?? null,
+    };
+  }
+
+  const byDirThenName = (a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name);
+
+  /** If `path` is one of the user's special folders, return its name. */
+  function specialFolderOf(path) {
+    if (!state.username) return null;
+    const m = path.match(new RegExp(`^/${state.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/]+)$`));
+    return m && SPECIAL_FOLDERS.includes(m[1]) ? m[1] : null;
+  }
+
+  const isNotFound = (e) => /not.?found|does.?not.?exist|no such|subject_does_not_exist/i.test(`${e?.code ?? ''} ${errMsg(e)}`);
+
+  /** Ask the user (through Puter's own prompt) to let this site read `path`. */
+  async function requestAccess(path) {
+    if (!window.puter?.perms?.request) {
+      toast('This version of Puter.js cannot request folder access', true);
+      return false;
+    }
+    try {
+      const special = specialFolderOf(path);
+      const granted = special
+        ? await puter.perms.request('folder', { name: special, access: 'read' })
+        : await puter.perms.request('fs', { path, access: 'read', create: false });
+      if (!granted) toast('Access was not granted', true);
+      return !!granted;
+    } catch (e) {
+      toast(`Access request failed: ${errMsg(e)}`, true);
+      return false;
+    }
+  }
+
+  const homePath = () => (state.username ? `/${state.username}` : null);
+
+  /** Ask for several folders behind a single Puter prompt. */
+  async function requestFolders(paths) {
+    if (!window.puter?.perms?.request) {
+      toast('This version of Puter.js cannot request folder access', true);
+      return false;
+    }
+    try {
+      const entries = paths.map((p) => {
+        const special = specialFolderOf(p);
+        return special ? { resource: 'folder', name: special, access: 'read' } : { resource: 'fs', path: p, access: 'read', create: false };
+      });
+      const results = await puter.perms.request(entries);
+      const ok = Array.isArray(results) ? results.some(Boolean) : !!results;
+      if (!ok) toast('Access was not granted', true);
+      return ok;
+    } catch (e) {
+      toast(`Access request failed: ${errMsg(e)}`, true);
+      return false;
+    }
+  }
+
+  async function readFolder(target) {
+    const files = ((await puter.fs.readdir(target)) || []).map((it) => toEntry(it, target));
+    // Puter hides special folders from websites that have no access yet; always show them in Home
+    // so they can be opened (which asks for access).
+    if (target === homePath()) {
+      for (const name of SPECIAL_FOLDERS) {
+        if (!files.some((f) => f.name === name)) files.push({ name, path: joinPath(target, name), isDir: true, size: null });
+      }
+    }
+    return files.sort(byDirThenName);
+  }
+
+  async function listDir(path = els.fsPath.value, { autoRequest = true } = {}) {
     if (!(await ensureSignedIn())) return;
     if (!state.username) await refreshAuth();
     const target = expandHome(path);
+    cancelSearch();
+    state.search = null;
+    state.listError = null;
+    els.fsPath.value = prettyPath(target);
     els.fileList.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: 'Loading…' }));
     try {
-      const items = await puter.fs.readdir(target);
-      state.cwd = target;
-      els.fsPath.value = target;
-      state.files = (items || []).map((it) => ({
-        name: it.name,
-        path: it.path || joinPath(target, it.name),
-        isDir: !!(it.is_dir ?? it.isDirectory),
-        size: it.size ?? null,
-      })).sort((a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name));
+      let files;
+      try {
+        files = await readFolder(target);
+      } catch (e) {
+        // Special folders need a one-time grant; ask straight away when the user clicked one.
+        if (!autoRequest || isNotFound(e) || !specialFolderOf(target)) throw e;
+        if (!(await requestAccess(target))) throw e;
+        files = await readFolder(target);
+      }
+      state.files = files;
       els.fsFilter.value = '';
       store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), fsPath: target });
     } catch (e) {
       state.files = [];
-      toast(`Cannot open folder "${target}": ${errMsg(e)}`, true);
+      state.listError = { path: target, message: errMsg(e), canRequest: !isNotFound(e) };
     }
+    state.cwd = target;
+    renderBreadcrumbs();
     renderFiles();
   }
 
+  function renderQuickFolders() {
+    els.quickFolders.replaceChildren();
+    for (const p of QUICK_FOLDERS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.textContent = p === '~' ? 'Home' : p.slice(2);
+      b.title = p;
+      b.addEventListener('click', () => listDir(p));
+      els.quickFolders.append(b);
+    }
+  }
+
+  function renderBreadcrumbs() {
+    els.crumbs.replaceChildren();
+    if (state.cwd === null) return;
+    const parts = state.cwd.split('/').filter(Boolean);
+    const add = (label, path, last) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'crumb';
+      b.textContent = label;
+      b.title = path;
+      if (last) b.setAttribute('aria-current', 'location');
+      else b.addEventListener('click', () => listDir(path));
+      els.crumbs.append(b);
+    };
+    add('/', '/', parts.length === 0);
+    parts.forEach((p, i) => {
+      els.crumbs.append(Object.assign(document.createElement('span'), { className: 'crumb-sep', textContent: '›' }));
+      add(p, `/${parts.slice(0, i + 1).join('/')}`, i === parts.length - 1);
+    });
+  }
+
+  function fileButton(f, showPath) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = f.path;
+    if (f.isDir) b.classList.add('dir');
+    if (f.path === state.loadedFile) b.classList.add('current');
+    if (!f.isDir && f.size !== null) b.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: formatBytes(f.size) }));
+    b.append(Object.assign(document.createElement('span'), { className: 'icon', textContent: f.isDir ? '📁' : '📄' }), document.createTextNode(f.name));
+    if (showPath) b.append(Object.assign(document.createElement('span'), { className: 'sub', textContent: prettyPath(parentOf(f.path)) }));
+    b.addEventListener('click', () => (f.isDir ? listDir(f.path) : openFile(f.path)));
+    return b;
+  }
+
+  function emptyRow(text) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = text;
+    return li;
+  }
+
+  function accessButton(path, label) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-sm';
+    b.textContent = label;
+    b.addEventListener('click', async () => {
+      if (await requestAccess(path)) listDir(state.cwd, { autoRequest: false });
+    });
+    return b;
+  }
+
+  /** Normalise names so "tropical merge" also finds "Tropical_Merge" or "tropical-merge". */
+  const squash = (s) => s.toLowerCase().replace(/[\s_\-.]+/g, '');
+
   function renderFiles() {
-    const q = els.fsFilter.value.trim().toLowerCase();
-    const files = q ? state.files.filter((f) => f.name.toLowerCase().includes(q)) : state.files;
     els.fileList.replaceChildren();
-    if (!files.length) {
-      const li = document.createElement('li');
-      li.className = 'empty';
-      li.textContent = state.cwd === null ? 'Enter a folder and click “Go”.' : (state.files.length ? 'No files match the filter.' : 'This folder is empty.');
+    els.fsHint.replaceChildren();
+    const s = state.search;
+
+    if (s) {
+      const head = document.createElement('li');
+      head.className = 'search-head';
+      head.textContent = s.done
+        ? `${s.results.length}${s.results.length >= SEARCH_MAX_RESULTS ? '+' : ''} match${s.results.length === 1 ? '' : 'es'} for “${s.query}” in ${prettyPath(s.root)}`
+        : `Searching ${prettyPath(s.root)}… ${s.scanned} items checked`;
+      const ctl = document.createElement('button');
+      ctl.type = 'button';
+      ctl.className = 'link';
+      ctl.textContent = s.done ? 'Back to folder' : 'Stop';
+      ctl.addEventListener('click', () => {
+        if (s.done) { state.search = null; els.fsFilter.value = ''; renderFiles(); } else cancelSearch();
+      });
+      head.append(' ', ctl);
+      els.fileList.append(head);
+      for (const f of s.results) {
+        const li = document.createElement('li');
+        li.append(fileButton(f, true));
+        els.fileList.append(li);
+      }
+      if (s.done && !s.results.length) els.fileList.append(emptyRow('Nothing found. The folder may be in a place this app has not been given access to yet.'));
+      if (s.error) els.fileList.append(emptyRow(`Some folders could not be searched: ${s.error}`));
+      if (s.truncated) els.fileList.append(emptyRow('Search stopped early because there were too many items; search from a smaller folder.'));
+      if (s.done && s.skipped.length) {
+        const li = emptyRow(`Not searched yet because this app has no access: ${s.skipped.map((d) => d.split('/').pop()).join(', ')}.`);
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-sm';
+        b.textContent = 'Grant access and search again';
+        b.addEventListener('click', async () => {
+          if (await requestFolders(s.skipped)) searchFolders(s.query);
+        });
+        li.append(document.createElement('br'), b);
+        els.fileList.append(li);
+      }
+      els.fileCount.textContent = '';
+      renderAccessHint();
+      return;
+    }
+
+    if (state.listError) {
+      const li = emptyRow(`Cannot open ${prettyPath(state.listError.path)}: ${state.listError.message}`);
+      li.classList.add('error-row');
+      if (state.listError.canRequest) {
+        li.append(document.createElement('br'), accessButton(state.listError.path, 'Request access to this folder'));
+      }
       els.fileList.append(li);
+      els.fileCount.textContent = '';
+      return;
+    }
+
+    const q = squash(els.fsFilter.value.trim());
+    const files = q ? state.files.filter((f) => squash(f.name).includes(q)) : state.files;
+    if (!files.length) {
+      els.fileList.append(emptyRow(state.cwd === null ? 'Choose a folder above, or enter a path and click “Go”.'
+        : state.files.length ? 'Nothing here matches. Press Enter or “Search subfolders” to look deeper.' : 'This folder is empty (or this app cannot see inside it yet).'));
     }
     for (const f of files) {
       const li = document.createElement('li');
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.title = f.path;
-      if (f.isDir) b.classList.add('dir');
-      if (f.path === state.loadedFile) b.classList.add('current');
-      const icon = document.createElement('span');
-      icon.className = 'icon';
-      icon.textContent = f.isDir ? '📁' : '📄';
-      b.append(icon, document.createTextNode(f.name));
-      if (!f.isDir && f.size !== null) {
-        const meta = document.createElement('span');
-        meta.className = 'meta';
-        meta.textContent = formatBytes(f.size);
-        b.prepend(meta);
-      }
-      b.addEventListener('click', () => (f.isDir ? listDir(f.path) : openFile(f.path)));
-      li.append(b);
+      li.append(fileButton(f, false));
       els.fileList.append(li);
     }
     els.fileCount.textContent = state.cwd === null ? '' : `${files.length} of ${state.files.length} item${state.files.length === 1 ? '' : 's'}`;
+    renderAccessHint();
+  }
+
+  function renderAccessHint() {
+    if (state.cwd === null) return;
+    const home = homePath();
+    const p = document.createElement('p');
+    p.className = 'muted small';
+    p.append('Missing a folder? ');
+    if (state.cwd === home) {
+      p.append('Folders on your Puter desktop are inside ');
+      const d = document.createElement('button');
+      d.type = 'button';
+      d.className = 'link';
+      d.textContent = 'Desktop';
+      d.addEventListener('click', () => listDir('~/Desktop'));
+      p.append(d, '. ');
+    }
+    const r = document.createElement('button');
+    r.type = 'button';
+    r.className = 'link';
+    r.textContent = 'Request access to this folder';
+    r.addEventListener('click', async () => {
+      if (await requestAccess(state.cwd)) listDir(state.cwd, { autoRequest: false });
+    });
+    p.append(r);
+    els.fsHint.append(p);
+  }
+
+  /* --- Deep search --- */
+  let searchController = null;
+
+  function cancelSearch() {
+    if (searchController) searchController.abort();
+    searchController = null;
+  }
+
+  /** Yield arrays of entries under `root`: server-side recursive listing when available, else a walk. */
+  async function* walkTree(root, signal) {
+    let yielded = false;
+    try {
+      const iter = puter.fs.readdir({ path: root, recursive: true, depth: SEARCH_MAX_DEPTH, stream: true });
+      if (iter && typeof iter[Symbol.asyncIterator] === 'function') {
+        for await (const page of iter) {
+          if (signal.aborted) return;
+          const items = Array.isArray(page) ? page : (page?.items ?? []);
+          yielded = true;
+          yield items.map((it) => toEntry(it, root));
+        }
+        return;
+      }
+    } catch (e) {
+      if (yielded) throw e;
+      // Older Puter.js or backend: fall back to walking folder by folder.
+    }
+    let level = [root];
+    for (let depth = 0; depth < SEARCH_MAX_DEPTH && level.length && !signal.aborted; depth++) {
+      const next = [];
+      for (let i = 0; i < level.length && !signal.aborted; i += 6) {
+        const batch = await Promise.all(level.slice(i, i + 6).map(async (dir) => {
+          try { return (await puter.fs.readdir(dir) || []).map((it) => toEntry(it, dir)); } catch { return []; }
+        }));
+        for (const entries of batch) {
+          next.push(...entries.filter((e) => e.isDir).map((e) => e.path));
+          yield entries;
+        }
+      }
+      level = next;
+    }
+  }
+
+  async function searchFolders(query = els.fsFilter.value.trim()) {
+    if (!query) { toast('Type part of a file or folder name first', true); els.fsFilter.focus(); return; }
+    if (!(await ensureSignedIn())) return;
+    if (!state.username) await refreshAuth();
+    const root = state.cwd ?? expandHome(els.fsPath.value);
+    cancelSearch();
+    const controller = new AbortController();
+    searchController = controller;
+    const q = squash(query);
+    const s = { query, root, results: [], scanned: 0, done: false, error: null, truncated: false, skipped: [] };
+    state.search = s;
+    renderFiles();
+    let lastPaint = 0;
+    const seenDirs = new Set();
+    const scan = async (start) => {
+      for await (const entries of walkTree(start, controller.signal)) {
+        if (controller.signal.aborted) return false;
+        s.scanned += entries.length;
+        for (const e of entries) {
+          if (e.isDir) seenDirs.add(e.path);
+          if (s.results.length < SEARCH_MAX_RESULTS && squash(e.name).includes(q) && !s.results.some((r) => r.path === e.path)) s.results.push(e);
+        }
+        if (s.scanned >= SEARCH_MAX_SCANNED) { s.truncated = true; return false; }
+        if (Date.now() - lastPaint > 150 && state.search === s) { lastPaint = Date.now(); renderFiles(); }
+      }
+      return true;
+    };
+    try {
+      let more = await scan(root);
+      // Special folders are often missing from the home listing, so search them directly too.
+      const home = homePath();
+      const extra = root === home || root === '/' ? SPECIAL_FOLDERS.map((n) => joinPath(home, n)) : [];
+      for (const dir of extra) {
+        if (!more || controller.signal.aborted) break;
+        if (seenDirs.has(dir)) continue;
+        try {
+          await puter.fs.readdir(dir);
+        } catch (e) {
+          if (!isNotFound(e)) s.skipped.push(dir);
+          continue;
+        }
+        const name = dir.split('/').pop();
+        if (squash(name).includes(q)) s.results.push({ name, path: dir, isDir: true, size: null });
+        more = await scan(dir);
+      }
+    } catch (e) {
+      s.error = errMsg(e);
+    }
+    if (searchController === controller) searchController = null;
+    s.done = true;
+    // Folders first, then shallower paths, then name.
+    s.results.sort((a, b) => (b.isDir - a.isDir) || (a.path.split('/').length - b.path.split('/').length) || a.name.localeCompare(b.name));
+    if (state.search === s) renderFiles();
   }
 
   /** Turn a Blob into editor text; JSON is pretty-printed, binary is rejected. */
@@ -744,7 +1069,9 @@
   els.tabFiles.addEventListener('click', () => setSideTab('files'));
   els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });
   els.upBtn.addEventListener('click', () => listDir(parentOf(state.cwd ?? expandHome(els.fsPath.value))));
-  els.fsFilter.addEventListener('input', renderFiles);
+  els.fsFilter.addEventListener('input', () => { if (!state.search) renderFiles(); });
+  els.fsFilter.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchFolders(); } });
+  els.searchBtn.addEventListener('click', () => searchFolders());
   els.pickFileBtn.addEventListener('click', pickFile);
   els.storeName.addEventListener('keydown', (e) => { if (e.key === 'Enter') getStore(); });
   els.storeName.addEventListener('input', saveDraft);
@@ -771,9 +1098,13 @@
     if (puter.auth.isSignedIn()) {
       puter.auth.signOut();
       state.keys = [];
+      cancelSearch();
       state.files = [];
       state.cwd = null;
+      state.search = null;
+      state.listError = null;
       state.username = null;
+      renderBreadcrumbs();
       renderList();
       renderFiles();
       await refreshAuth();
@@ -841,6 +1172,7 @@
       console.warn('Service worker registration failed', e);
       return;
     }
+    if (!reg) return;
 
     const track = (worker) => {
       worker.addEventListener('statechange', () => {
@@ -919,6 +1251,7 @@
     renderList();
   }
 
+  renderQuickFolders();
   restore();
   initServiceWorker();
   refreshAuth().then((signedIn) => {

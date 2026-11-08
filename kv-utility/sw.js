@@ -1,7 +1,7 @@
 /* KV Utility service worker.
  * Bump VERSION on every release: the browser sees sw.js change, installs the
  * new worker, and the app shows an "Update now" banner. */
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const CACHE = `kv-utility-${VERSION}`;
 const SHELL = [
   './',
