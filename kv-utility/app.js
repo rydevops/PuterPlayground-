@@ -16,6 +16,7 @@
     tabStores: $('tab-stores'), tabFiles: $('tab-files'), paneStores: $('pane-stores'), paneFiles: $('pane-files'),
     pathForm: $('path-form'), fsPath: $('fs-path'), upBtn: $('up-btn'), fsFilter: $('fs-filter'),
     fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'), source: $('source'),
+    appSelect: $('app-select'), appForget: $('app-forget'), appNote: $('app-note'),
     quickFolders: $('quick-folders'), crumbs: $('crumbs'), searchBtn: $('search-btn'), fsHint: $('fs-hint'),
   };
 
@@ -24,6 +25,7 @@
   const state = {
     keys: [], loadedName: null, savedText: '', parseError: null, view: 'text',
     source: '', files: [], cwd: null, loadedFile: null, username: null, search: null, listError: null,
+    app: null, // { uid, label } when working with another app's data
   };
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -118,7 +120,14 @@
     if (!(await ensureSignedIn())) return;
     await withBusy(els.refreshBtn, async () => {
       try {
-        const keys = await puter.kv.list();
+        let keys;
+        try {
+          keys = state.app ? await puter.kv.list('*', kvOpt()) : await puter.kv.list();
+        } catch (e) {
+          // Access to another app's data may have been revoked: ask again once.
+          if (!state.app || isNotFound(e) || !(await requestAppData(state.app.uid))) throw e;
+          keys = await puter.kv.list('*', kvOpt());
+        }
         state.keys = (keys || []).map((k) => (typeof k === 'string' ? k : k.key)).sort((a, b) => a.localeCompare(b));
         renderList();
       } catch (e) {
@@ -133,7 +142,7 @@
     if (!(await ensureSignedIn())) return;
     await withBusy(els.getBtn, async () => {
       try {
-        const value = await puter.kv.get(name);
+        const value = state.app ? await puter.kv.get(name, kvOpt()) : await puter.kv.get(name);
         els.storeName.value = name;
         if (value === null || value === undefined) {
           toast(`Store "${name}" does not exist yet — Save to create it`);
@@ -178,11 +187,11 @@
     await withBusy(els.saveBtn, async () => {
       try {
         const payload = els.saveMode.value === 'string' ? JSON.stringify(parsed) : parsed;
-        await puter.kv.set(name, payload);
+        await (state.app ? puter.kv.set(name, payload, kvOpt()) : puter.kv.set(name, payload));
         state.loadedName = name;
         state.savedText = text;
         state.loadedFile = null;
-        setSource(`KV store: ${name}`);
+        setSource(kvSource(name));
         renderFiles();
         if (!state.keys.includes(name)) {
           state.keys.push(name);
@@ -204,7 +213,7 @@
     if (!(await ensureSignedIn())) return;
     await withBusy(els.deleteBtn, async () => {
       try {
-        await puter.kv.del(name);
+        await (state.app ? puter.kv.del(name, kvOpt()) : puter.kv.del(name));
         state.keys = state.keys.filter((k) => k !== name);
         if (state.loadedName === name) { state.loadedName = null; setSource(''); }
         state.savedText = '';
@@ -266,6 +275,105 @@
       : '';
   }
 
+  /* ---------- Other apps' data ----------
+   * Puter gives every app (including every website using Puter.js) its own KV namespace
+   * and its own folder, ~/AppData/<app id>. Relative paths such as
+   * puter.fs.write('a/b.json') land in that folder. Another app's data can be used
+   * after the user grants access with puter.perms.request('appData', ...). */
+  const kvOpt = () => (state.app ? { appUuid: state.app.uid } : undefined);
+  const kvSource = (name) => `KV store: ${name}${state.app ? ` (${state.app.label})` : ''}`;
+  const connectedApps = () => store.get(PREFS_KEY, {}).apps || [];
+
+  function saveConnectedApps(apps) {
+    store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), apps });
+  }
+
+  function renderAppSelect() {
+    const sel = els.appSelect;
+    sel.replaceChildren();
+    sel.append(new Option('This app (KV Utility)', ''));
+    for (const a of connectedApps()) sel.append(new Option(a.label, a.uid));
+    sel.append(new Option('Connect another app…', '__connect__'));
+    sel.value = state.app?.uid ?? '';
+    els.appForget.hidden = !state.app;
+    els.appNote.textContent = state.app ? `Stores and files of ${state.app.label} (${state.app.uid})` : '';
+    els.appNote.title = els.appNote.textContent;
+  }
+
+  async function resolveAppUid(input) {
+    if (APP_UID_RE.test(input)) return input;
+    try {
+      const app = await puter.apps.get(input);
+      if (app?.uid) return app.uid;
+    } catch { /* not a registered app name */ }
+    return null;
+  }
+
+  /** One Puter prompt for another app's KV store (read/write/delete) and files (read). */
+  async function requestAppData(uid) {
+    try {
+      const granted = await puter.perms.request('appData', { app: uid, scopes: { kv: ['read', 'write', 'delete'], fs: ['read'] } });
+      if (!granted) toast('Access to that app\'s data was not granted', true);
+      return !!granted;
+    } catch (e) {
+      toast(`Access request failed: ${errMsg(e)}`, true);
+      return false;
+    }
+  }
+
+  async function connectApp() {
+    if (!(await ensureSignedIn())) return false;
+    const input = (prompt(
+      "Enter the other app's ID (looks like app-1234abcd-…) or its Puter app name.\n\n"
+      + "Tip: open that app, then run  puter.appID  in its browser console to see its ID.",
+    ) || '').trim();
+    if (!input) return false;
+    const uid = await resolveAppUid(input);
+    if (!uid) {
+      toast(`Couldn't find an app called "${input}". Use its app ID instead (puter.appID in that app).`, true);
+      return false;
+    }
+    if (uid === puter.appID) {
+      toast('That is this app — choose "This app" instead', true);
+      return false;
+    }
+    if (!(await requestAppData(uid))) return false;
+    const label = APP_UID_RE.test(input) ? `${uid.slice(0, 12)}…` : input;
+    const apps = connectedApps().filter((a) => a.uid !== uid);
+    apps.push({ uid, label });
+    saveConnectedApps(apps);
+    await switchApp(uid);
+    toast(`Connected to ${label}`);
+    return true;
+  }
+
+  async function switchApp(uid) {
+    if (isDirty() && !confirm('You have unsaved changes. Discard them and switch apps?')) {
+      renderAppSelect();
+      return;
+    }
+    state.app = connectedApps().find((a) => a.uid === uid) || null;
+    store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), currentApp: state.app?.uid ?? null });
+    state.keys = [];
+    state.loadedName = null;
+    state.savedText = els.editor.value;
+    setSource('');
+    renderAppSelect();
+    renderQuickFolders();
+    renderList();
+    if (window.puter && puter.auth.isSignedIn()) {
+      listStores();
+      if (!els.paneFiles.hidden) listDir(state.app ? `~/AppData/${state.app.uid}` : '~');
+    }
+  }
+
+  function forgetApp() {
+    if (!state.app) return;
+    if (!confirm(`Remove ${state.app.label} from this list? (Its data is not touched.)`)) return;
+    saveConnectedApps(connectedApps().filter((a) => a.uid !== state.app.uid));
+    switchApp('');
+  }
+
   /* ---------- Puter files (read-only) ---------- */
   // Puter only lets a website read the user's special folders (and any other path)
   // after the user grants access, so listings can look incomplete until then.
@@ -317,6 +425,26 @@
     return m && SPECIAL_FOLDERS.includes(m[1]) ? m[1] : null;
   }
 
+  const APP_UID_RE = /^app-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** If `path` is inside another app's private folder (~/AppData/<app id>/...), return that app id. */
+  function appFolderOf(path) {
+    if (!state.username) return null;
+    const prefix = `/${state.username}/AppData/`;
+    if (!path.startsWith(prefix)) return null;
+    const id = path.slice(prefix.length).split('/')[0];
+    return APP_UID_RE.test(id) ? id : null;
+  }
+
+  /** The puter.perms.request entry that lets this site read `path`. */
+  function accessEntryFor(path) {
+    const special = specialFolderOf(path);
+    if (special) return { resource: 'folder', name: special, access: 'read' };
+    const appUid = appFolderOf(path);
+    if (appUid) return { resource: 'appData', app: appUid, scopes: { fs: ['read'] } };
+    return { resource: 'fs', path, access: 'read', create: false };
+  }
+
   const isNotFound = (e) => /not.?found|does.?not.?exist|no such|subject_does_not_exist/i.test(`${e?.code ?? ''} ${errMsg(e)}`);
 
   /** Ask the user (through Puter's own prompt) to let this site read `path`. */
@@ -326,10 +454,8 @@
       return false;
     }
     try {
-      const special = specialFolderOf(path);
-      const granted = special
-        ? await puter.perms.request('folder', { name: special, access: 'read' })
-        : await puter.perms.request('fs', { path, access: 'read', create: false });
+      const { resource, ...details } = accessEntryFor(path);
+      const granted = await puter.perms.request(resource, details);
       if (!granted) toast('Access was not granted', true);
       return !!granted;
     } catch (e) {
@@ -347,10 +473,7 @@
       return false;
     }
     try {
-      const entries = paths.map((p) => {
-        const special = specialFolderOf(p);
-        return special ? { resource: 'folder', name: special, access: 'read' } : { resource: 'fs', path: p, access: 'read', create: false };
-      });
+      const entries = paths.map(accessEntryFor);
       const results = await puter.perms.request(entries);
       const ok = Array.isArray(results) ? results.some(Boolean) : !!results;
       if (!ok) toast('Access was not granted', true);
@@ -387,8 +510,8 @@
       try {
         files = await readFolder(target);
       } catch (e) {
-        // Special folders need a one-time grant; ask straight away when the user clicked one.
-        if (!autoRequest || isNotFound(e) || !specialFolderOf(target)) throw e;
+        // Special folders and other apps' folders need a one-time grant; ask straight away.
+        if (!autoRequest || isNotFound(e) || !(specialFolderOf(target) || appFolderOf(target))) throw e;
         if (!(await requestAccess(target))) throw e;
         files = await readFolder(target);
       }
@@ -406,11 +529,14 @@
 
   function renderQuickFolders() {
     els.quickFolders.replaceChildren();
-    for (const p of QUICK_FOLDERS) {
+    const chips = QUICK_FOLDERS.map((p) => [p === '~' ? 'Home' : p.slice(2), p]);
+    if (state.app) chips.unshift([`${state.app.label} files`, `~/AppData/${state.app.uid}`]);
+    for (const [label, p] of chips) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'chip';
-      b.textContent = p === '~' ? 'Home' : p.slice(2);
+      if (state.app && p.endsWith(state.app.uid)) b.classList.add('chip-app');
+      b.textContent = label;
       b.title = p;
       b.addEventListener('click', () => listDir(p));
       els.quickFolders.append(b);
@@ -550,6 +676,7 @@
     p.className = 'muted small';
     p.append('Missing a folder? ');
     if (state.cwd === home) {
+      p.append('Files an app saves with a relative path are in AppData/<app id>: pick that app under “Data from”. ');
       p.append('Folders on your Puter desktop are inside ');
       const d = document.createElement('button');
       d.type = 'button';
@@ -642,7 +769,9 @@
       let more = await scan(root);
       // Special folders are often missing from the home listing, so search them directly too.
       const home = homePath();
-      const extra = root === home || root === '/' ? SPECIAL_FOLDERS.map((n) => joinPath(home, n)) : [];
+      const extra = root === home || root === '/'
+        ? [...SPECIAL_FOLDERS.map((n) => joinPath(home, n)), ...connectedApps().map((a) => `${home}/AppData/${a.uid}`)]
+        : [];
       for (const dir of extra) {
         if (!more || controller.signal.aborted) break;
         if (seenDirs.has(dir)) continue;
@@ -734,7 +863,7 @@
   }
 
   /* ---------- Editor ---------- */
-  function setEditor(text, loadedName, source = loadedName ? `KV store: ${loadedName}` : '') {
+  function setEditor(text, loadedName, source = loadedName ? kvSource(loadedName) : '') {
     els.editor.value = text;
     state.loadedName = loadedName;
     state.savedText = text;
@@ -1065,6 +1194,15 @@
   els.newBtn.addEventListener('click', newStore);
   els.refreshBtn.addEventListener('click', listStores);
   els.filter.addEventListener('input', renderList);
+  els.appSelect.addEventListener('change', async () => {
+    const v = els.appSelect.value;
+    if (v === '__connect__') {
+      if (!(await connectApp())) renderAppSelect();
+    } else {
+      switchApp(v);
+    }
+  });
+  els.appForget.addEventListener('click', forgetApp);
   els.tabStores.addEventListener('click', () => setSideTab('stores'));
   els.tabFiles.addEventListener('click', () => setSideTab('files'));
   els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });
@@ -1251,6 +1389,11 @@
     renderList();
   }
 
+  {
+    const prefs = store.get(PREFS_KEY, {});
+    state.app = connectedApps().find((a) => a.uid === prefs.currentApp) || null;
+  }
+  renderAppSelect();
   renderQuickFolders();
   restore();
   initServiceWorker();
