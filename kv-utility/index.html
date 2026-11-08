@@ -143,6 +143,30 @@
     <span>Shortcuts: Ctrl+S save · Ctrl+Enter get · Ctrl+Shift+F format</span>
   </footer>
 
+  <dialog id="app-dialog" class="dialog" aria-labelledby="app-dialog-title">
+    <form method="dialog">
+      <h2 id="app-dialog-title">Connect another app</h2>
+      <p class="muted small">Pick the app whose stores and files you want to open. Puter will ask you to allow access.</p>
+      <input id="app-search" class="input" type="search" placeholder="Filter apps by name, site or ID" autocomplete="off">
+      <div class="app-status-row">
+        <span id="app-status" class="muted small" aria-live="polite"></span>
+        <button id="app-allow" type="button" class="btn btn-sm" hidden>Allow access to find more apps</button>
+      </div>
+      <ul id="app-results" class="store-list app-results"></ul>
+      <details class="manual">
+        <summary class="small">Enter an app ID or name instead</summary>
+        <div class="manual-row">
+          <input id="app-manual" class="input mono" type="text" placeholder="app-1234abcd-… or app name" spellcheck="false" autocomplete="off">
+          <button id="app-manual-go" type="button" class="btn btn-sm">Connect</button>
+        </div>
+        <p class="muted small">In the other app, run <code>puter.appID</code> in the browser console to see its ID.</p>
+      </details>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="app.js"></script>
