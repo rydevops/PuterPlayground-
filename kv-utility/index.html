@@ -34,13 +34,35 @@
   <main class="layout">
     <!-- Store list -->
     <aside class="panel sidebar">
-      <div class="panel-head">
-        <h2>Stores</h2>
-        <button id="refresh-btn" class="btn btn-sm" title="List stores">↻ List</button>
+      <div class="side-tabs" role="tablist">
+        <button id="tab-stores" class="side-tab active" role="tab" aria-selected="true">Stores</button>
+        <button id="tab-files" class="side-tab" role="tab" aria-selected="false">Files</button>
       </div>
-      <input id="filter" class="input" type="search" placeholder="Filter (e.g. config:*)" autocomplete="off">
-      <ul id="store-list" class="store-list" aria-live="polite"></ul>
-      <p id="store-count" class="muted small"></p>
+
+      <div id="pane-stores" class="side-pane" role="tabpanel">
+        <div class="panel-head">
+          <h2>Stores</h2>
+          <button id="refresh-btn" class="btn btn-sm" title="List stores">↻ List</button>
+        </div>
+        <input id="filter" class="input" type="search" placeholder="Filter (e.g. config:*)" autocomplete="off">
+        <ul id="store-list" class="store-list" aria-live="polite"></ul>
+        <p id="store-count" class="muted small"></p>
+      </div>
+
+      <div id="pane-files" class="side-pane" role="tabpanel" hidden>
+        <div class="panel-head">
+          <h2>Puter files</h2>
+          <button id="pick-file-btn" class="btn btn-sm" title="Choose a file with the Puter file picker">Pick file…</button>
+        </div>
+        <form id="path-form" class="path-bar">
+          <button id="up-btn" type="button" class="btn btn-sm" title="Parent folder">↑</button>
+          <input id="fs-path" class="input mono" type="text" value="~" spellcheck="false" autocomplete="off" aria-label="Folder path">
+          <button class="btn btn-sm" type="submit">Go</button>
+        </form>
+        <input id="fs-filter" class="input" type="search" placeholder="Filter files" autocomplete="off">
+        <ul id="file-list" class="store-list" aria-live="polite"></ul>
+        <p id="file-count" class="muted small"></p>
+      </div>
     </aside>
 
     <!-- Editor -->
@@ -96,6 +118,7 @@
         <span id="cursor-pos" class="muted small"></span>
         <span id="size" class="muted small"></span>
         <span id="dirty" class="muted small"></span>
+        <span id="source" class="muted small source"></span>
       </div>
     </section>
   </main>

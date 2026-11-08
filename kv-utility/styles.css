@@ -109,7 +109,22 @@ body {
 .panel-head h2 { font-size: 14px; margin: 0; }
 
 .sidebar { padding-bottom: 8px; }
-.sidebar > .input { margin: 0 12px 8px; }
+.side-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.side-tab {
+  flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+  padding: 9px 8px 7px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.side-tab:hover { color: var(--text); }
+.side-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.side-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.side-pane > .input { margin: 0 12px 8px; }
+.path-bar { display: flex; gap: 4px; margin: 0 12px 8px; }
+.path-bar .input { flex: 1; padding: 3px 8px; font-size: 12.5px; }
+.store-list li button .icon { display: inline-block; width: 1.4em; }
+.store-list li button .meta { float: right; color: var(--muted); margin-left: 8px; }
+.store-list li button.current .meta { color: inherit; }
+.store-list li button.dir { font-weight: 600; }
+.source { margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .store-list { list-style: none; margin: 0; padding: 0 6px; overflow: auto; flex: 1; min-height: 80px; }
 .store-list li button {
   width: 100%; text-align: left; background: none; border: 0; color: var(--text);
@@ -119,7 +134,7 @@ body {
 .store-list li button:hover { background: var(--hover); }
 .store-list li button.current { background: var(--accent); color: var(--accent-text); }
 .store-list .empty { padding: 8px; color: var(--muted); font-size: 12.5px; }
-#store-count { margin: 6px 12px 0; }
+#store-count, #file-count { margin: 6px 12px 0; }
 
 .editor-panel { overflow: hidden; }
 .store-bar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

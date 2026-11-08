@@ -7,6 +7,11 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
 ## Features
 
 - **Stores:** type a store name, then **Get**, **Save**, **New** or **Delete**. **↻ List** lists every store, and the filter box takes a substring or a glob (`config:*`).
+- **Puter files (read-only):** the **Files** tab in the sidebar browses your Puter cloud storage.
+  - Type a folder path (`~` is your home folder) and click **Go**, use **↑** to go up, or click a folder to open it.
+  - Click a file to open it in the editor. JSON is pretty-printed, other text opens as-is, and binary files or files over 10 MB are refused.
+  - **Pick file…** opens Puter's own file picker instead.
+  - The status bar shows where the editor content came from. **Save** copies a JSON file into the KV store under the suggested store name. Files themselves are never changed.
 - **JSON editor:**
   - Line numbers, plus a cursor position and size readout.
   - Live validation. Click the red pill to jump to the error.
