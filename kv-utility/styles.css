@@ -243,3 +243,23 @@ body {
 .app-note { margin: 2px 12px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-note:empty { display: none; }
 .chip.chip-app { border-color: var(--accent); color: var(--accent); }
+
+/* App picker dialog */
+.dialog {
+  width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text);
+  box-shadow: 0 12px 40px rgba(0,0,0,.3);
+}
+.dialog::backdrop { background: rgba(0,0,0,.4); }
+.dialog form { display: flex; flex-direction: column; gap: 8px; padding: 16px; max-height: calc(100vh - 48px); }
+.dialog h2 { margin: 0; font-size: 16px; }
+.dialog p { margin: 0; }
+.app-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; min-height: 26px; }
+.app-results { border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-height: 120px; max-height: 45vh; flex: 1 1 auto; }
+.app-results li button { font-family: inherit; font-size: 13.5px; white-space: normal; }
+.app-results li button .sub { padding-left: 0; font-family: var(--mono); font-size: 11px; }
+.manual summary { cursor: pointer; color: var(--accent); }
+.manual-row { display: flex; gap: 6px; margin: 8px 0 4px; }
+.manual-row .input { flex: 1; }
+.dialog-actions { display: flex; justify-content: flex-end; }
+.app-results li button .sub.peek { font-family: inherit; font-style: italic; }

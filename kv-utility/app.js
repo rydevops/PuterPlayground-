@@ -17,6 +17,8 @@
     pathForm: $('path-form'), fsPath: $('fs-path'), upBtn: $('up-btn'), fsFilter: $('fs-filter'),
     fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'), source: $('source'),
     appSelect: $('app-select'), appForget: $('app-forget'), appNote: $('app-note'),
+    appDialog: $('app-dialog'), appSearch: $('app-search'), appStatus: $('app-status'), appResults: $('app-results'),
+    appAllow: $('app-allow'), appManual: $('app-manual'), appManualGo: $('app-manual-go'),
     quickFolders: $('quick-folders'), crumbs: $('crumbs'), searchBtn: $('search-btn'), fsHint: $('fs-hint'),
   };
 
@@ -321,30 +323,170 @@
     }
   }
 
-  async function connectApp() {
-    if (!(await ensureSignedIn())) return false;
-    const input = (prompt(
-      "Enter the other app's ID (looks like app-1234abcd-…) or its Puter app name.\n\n"
-      + "Tip: open that app, then run  puter.appID  in its browser console to see its ID.",
-    ) || '').trim();
-    if (!input) return false;
-    const uid = await resolveAppUid(input);
-    if (!uid) {
-      toast(`Couldn't find an app called "${input}". Use its app ID instead (puter.appID in that app).`, true);
-      return false;
+  /* --- App picker --- */
+  // Apps are discovered from two places, merged by app ID:
+  //  - puter.apps.list(): apps you created on Puter (has names and titles);
+  //  - ~/AppData/<app id> folders: every app (including plain websites using Puter.js)
+  //    that has stored files for you.
+  let discovery = { apps: [], blocked: [] };
+
+  function appLabel(app) {
+    if (app.title || app.name) return app.title || app.name;
+    return `Unnamed app ${app.uid.slice(4, 12)}`;
+  }
+
+  async function discoverApps() {
+    const found = new Map();
+    const blocked = [];
+    const add = (uid, info, source) => {
+      if (!uid || uid === puter.appID) return;
+      const cur = found.get(uid) || { uid, sources: new Set() };
+      Object.assign(cur, Object.fromEntries(Object.entries(info).filter(([, v]) => v)));
+      cur.sources.add(source);
+      found.set(uid, cur);
+    };
+
+    for (const a of connectedApps()) add(a.uid, { saved: a.label }, 'connected');
+
+    const tasks = [];
+    if (puter.apps?.list) {
+      tasks.push((async () => {
+        try {
+          for (const a of (await puter.apps.list()) || []) {
+            let host = '';
+            try { host = a.index_url ? new URL(a.index_url).host : ''; } catch { /* ignore */ }
+            add(a.uid, { name: a.name, title: a.title, host }, 'yours');
+          }
+        } catch (e) {
+          if (!isNotFound(e)) blocked.push({ resource: 'apps', access: 'read' });
+        }
+      })());
     }
+    tasks.push((async () => {
+      const dir = `${homePath()}/AppData`;
+      try {
+        for (const it of (await puter.fs.readdir(dir)) || []) {
+          const e = toEntry(it, dir);
+          if (e.isDir && APP_UID_RE.test(e.name)) add(e.name, {}, 'files');
+        }
+      } catch (e) {
+        if (!isNotFound(e)) blocked.push({ resource: 'fs', path: '~/AppData', access: 'read', create: false });
+      }
+    })());
+    await Promise.all(tasks);
+
+    // Peek inside each app's folder so unnamed website apps can be recognised by their files.
+    const withFiles = [...found.values()].filter((a) => a.sources.has('files'));
+    for (let i = 0; i < withFiles.length; i += 6) {
+      await Promise.all(withFiles.slice(i, i + 6).map(async (a) => {
+        try {
+          const items = (await puter.fs.readdir(`${homePath()}/AppData/${a.uid}`)) || [];
+          a.peek = items.map((it) => it.name).sort((x, y) => x.localeCompare(y));
+        } catch { /* no access to this app's folder yet */ }
+      }));
+    }
+
+    const apps = [...found.values()].map((a) => ({
+      ...a,
+      label: a.title || a.name || a.saved || (a.peek?.length ? `App with ${a.peek[0]}${a.peek.length > 1 ? ` +${a.peek.length - 1}` : ''}` : appLabel(a)),
+    }));
+    // Named apps first, then by label.
+    apps.sort((a, b) => (!!(b.title || b.name || b.saved) - !!(a.title || a.name || a.saved)) || a.label.localeCompare(b.label));
+    return { apps, blocked };
+  }
+
+  async function openAppDialog() {
+    if (!(await ensureSignedIn())) return;
+    if (!state.username) await refreshAuth();
+    els.appSearch.value = '';
+    els.appManual.value = '';
+    els.appDialog.showModal();
+    await refreshAppDialog();
+  }
+
+  async function refreshAppDialog() {
+    discovery = { apps: [], blocked: [] };
+    els.appStatus.textContent = 'Looking for apps on your account…';
+    els.appResults.replaceChildren();
+    els.appAllow.hidden = true;
+    discovery = await discoverApps();
+    renderAppDialog();
+    els.appSearch.focus();
+  }
+
+  function renderAppDialog() {
+    const q = squash(els.appSearch.value.trim());
+    const apps = q
+      ? discovery.apps.filter((a) => squash(`${a.label} ${a.name || ''} ${a.host || ''} ${a.uid} ${(a.peek || []).join(' ')}`).includes(q))
+      : discovery.apps;
+    els.appResults.replaceChildren();
+    for (const a of apps) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = a.uid;
+      if (a.uid === state.app?.uid) b.classList.add('current');
+      b.append(document.createTextNode(a.label));
+      const tags = [];
+      if (a.sources.has('yours')) tags.push('your app');
+      if (a.sources.has('files')) tags.push('has files');
+      if (a.sources.has('connected')) tags.push('connected');
+      const sub = [a.host, a.uid, tags.join(' · ')].filter(Boolean).join(' — ');
+      b.append(Object.assign(document.createElement('span'), { className: 'sub', textContent: sub }));
+      if (a.peek) {
+        const shown = a.peek.slice(0, 4).join(', ') + (a.peek.length > 4 ? `, +${a.peek.length - 4} more` : '');
+        b.append(Object.assign(document.createElement('span'), { className: 'sub peek', textContent: a.peek.length ? `contains: ${shown}` : 'folder is empty' }));
+      }
+      b.addEventListener('click', () => connectByUid(a.uid, a.label));
+      li.append(b);
+      els.appResults.append(li);
+    }
+    if (!apps.length) {
+      els.appResults.append(emptyRow(discovery.apps.length ? 'No apps match the filter.' : 'No other apps found yet.'));
+    }
+    const n = discovery.apps.length;
+    els.appStatus.textContent = `${n} app${n === 1 ? '' : 's'} found.`
+      + (discovery.blocked.length ? ' Some places could not be checked yet.' : '');
+    els.appAllow.hidden = !discovery.blocked.length;
+  }
+
+  async function allowAppDiscovery() {
+    if (!discovery.blocked.length) return;
+    try {
+      const res = await puter.perms.request(discovery.blocked);
+      if (!(Array.isArray(res) ? res.some(Boolean) : res)) { toast('Access was not granted', true); return; }
+    } catch (e) {
+      toast(`Access request failed: ${errMsg(e)}`, true);
+      return;
+    }
+    await refreshAppDialog();
+  }
+
+  async function connectByUid(uid, label) {
     if (uid === puter.appID) {
       toast('That is this app — choose "This app" instead', true);
       return false;
     }
     if (!(await requestAppData(uid))) return false;
-    const label = APP_UID_RE.test(input) ? `${uid.slice(0, 12)}…` : input;
     const apps = connectedApps().filter((a) => a.uid !== uid);
     apps.push({ uid, label });
     saveConnectedApps(apps);
+    if (els.appDialog.open) els.appDialog.close();
     await switchApp(uid);
     toast(`Connected to ${label}`);
     return true;
+  }
+
+  async function connectManual() {
+    const input = els.appManual.value.trim();
+    if (!input) { els.appManual.focus(); return; }
+    const uid = await resolveAppUid(input);
+    if (!uid) {
+      toast(`Couldn't find an app called "${input}". Use its app ID instead (puter.appID in that app).`, true);
+      return;
+    }
+    const known = discovery.apps.find((a) => a.uid === uid);
+    await connectByUid(uid, known?.label || (APP_UID_RE.test(input) ? `Unnamed app ${uid.slice(4, 12)}` : input));
   }
 
   async function switchApp(uid) {
@@ -1197,12 +1339,17 @@
   els.appSelect.addEventListener('change', async () => {
     const v = els.appSelect.value;
     if (v === '__connect__') {
-      if (!(await connectApp())) renderAppSelect();
+      renderAppSelect();
+      openAppDialog();
     } else {
       switchApp(v);
     }
   });
   els.appForget.addEventListener('click', forgetApp);
+  els.appSearch.addEventListener('input', renderAppDialog);
+  els.appAllow.addEventListener('click', allowAppDiscovery);
+  els.appManualGo.addEventListener('click', connectManual);
+  els.appManual.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectManual(); } });
   els.tabStores.addEventListener('click', () => setSideTab('stores'));
   els.tabFiles.addEventListener('click', () => setSideTab('files'));
   els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });
