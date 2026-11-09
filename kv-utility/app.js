@@ -19,6 +19,7 @@
     appSelect: $('app-select'), appForget: $('app-forget'), appNote: $('app-note'),
     appDialog: $('app-dialog'), appSearch: $('app-search'), appStatus: $('app-status'), appResults: $('app-results'),
     appAllow: $('app-allow'), appManual: $('app-manual'), appManualGo: $('app-manual-go'),
+    layout: $('layout'), mobileNav: $('mobile-nav'), newStoreBtn: $('new-store-btn'),
     quickFolders: $('quick-folders'), crumbs: $('crumbs'), searchBtn: $('search-btn'), fsHint: $('fs-hint'),
   };
 
@@ -150,6 +151,7 @@
         if (value === null || value === undefined) {
           toast(`Store "${name}" does not exist yet — Save to create it`);
           setEditor('', name);
+          showEditorOnPhone();
           return;
         }
         let text;
@@ -167,6 +169,7 @@
         els.saveMode.value = mode;
         setEditor(text, name);
         toast(`Loaded "${name}"${mode === 'string' ? ' (stored as JSON text)' : ''}`);
+        showEditorOnPhone();
       } catch (e) {
         toast(`Get failed: ${errMsg(e)}`, true);
       }
@@ -234,6 +237,7 @@
     els.storeName.value = '';
     els.saveMode.value = 'value';
     setEditor('{\n}', null);
+    showEditorOnPhone();
     els.storeName.focus();
   }
 
@@ -1014,6 +1018,7 @@
     onEditorChange();
     renderFiles();
     toast(`Opened ${name} — Save to store it in the KV store`);
+    showEditorOnPhone();
   }
 
   async function openFile(path) {
@@ -1062,7 +1067,33 @@
     els.tabStores.setAttribute('aria-selected', String(!files));
     els.tabFiles.setAttribute('aria-selected', String(files));
     store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), tab });
+    if (els.layout.dataset.view !== 'editor' && els.layout.dataset.view !== tab) {
+      els.layout.dataset.view = tab;
+      for (const b of els.mobileNav.querySelectorAll('button')) {
+        if (b.dataset.view === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+      }
+    }
     if (files && state.cwd === null && window.puter && puter.auth.isSignedIn()) listDir();
+  }
+
+  /* ---------- Phone layout ----------
+   * On narrow screens one section is shown at a time (Stores, Files or Editor),
+   * switched with the bottom tab bar. Wider screens show everything side by side. */
+  const narrow = window.matchMedia('(max-width: 760px)');
+
+  function setMobileView(view) {
+    els.layout.dataset.view = view;
+    for (const b of els.mobileNav.querySelectorAll('button')) {
+      if (b.dataset.view === view) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    }
+    if (view !== 'editor' && (els.paneFiles.hidden ? 'stores' : 'files') !== view) setSideTab(view);
+    store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), mobileView: view });
+  }
+
+  /** After picking something to edit, go straight to the editor on phones. */
+  function showEditorOnPhone() {
+    if (narrow.matches) setMobileView('editor');
   }
 
   /* ---------- Editor ---------- */
@@ -1211,6 +1242,7 @@
     const text = els.editor.value;
     els.size.textContent = formatBytes(new TextEncoder().encode(text).length);
     els.dirty.textContent = isDirty() ? '● Unsaved changes' : '';
+    els.mobileNav.querySelector('[data-view="editor"]').classList.toggle('dirty', isDirty());
     updateCursor();
   }
 
@@ -1411,6 +1443,8 @@
   els.appAllow.addEventListener('click', allowAppDiscovery);
   els.appManualGo.addEventListener('click', connectManual);
   els.appManual.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectManual(); } });
+  for (const b of els.mobileNav.querySelectorAll('button')) b.addEventListener('click', () => setMobileView(b.dataset.view));
+  els.newStoreBtn.addEventListener('click', newStore);
   els.tabStores.addEventListener('click', () => setSideTab('stores'));
   els.tabFiles.addEventListener('click', () => setSideTab('files'));
   els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });
@@ -1593,6 +1627,7 @@
     }
     if (prefs.fsPath) els.fsPath.value = prefs.fsPath;
     if (prefs.tab === 'files') setSideTab('files');
+    if (prefs.mobileView === 'editor') setMobileView('editor');
     onEditorChange();
     renderList();
   }

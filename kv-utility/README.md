@@ -39,6 +39,10 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
   - A collapsible **Tree** view.
 - **Save mode:** saves the value as a native JSON value or as JSON text (a string). The mode is picked automatically when a store is loaded, so other apps that read the store keep working.
 - **Drafts:** your work in the editor is saved locally and comes back after a reload or an app update.
+- **Phones:** below 760px wide, the app shows one section at a time (Stores, Files or Editor), switched with a bottom tab bar.
+  - Picking a store or file opens the Editor, and a dot on the Editor tab marks unsaved changes.
+  - The editor controls fit in two rows, the formatting toolbar scrolls sideways, and the app picker opens as a bottom sheet.
+  - Tap targets are larger, and form fields use 16px text so iOS doesn't zoom in when you tap one.
 - **Shortcuts:** `Ctrl/⌘+S` saves, `Ctrl/⌘+Enter` gets, `Ctrl/⌘+Shift+F` formats, and `Tab` indents.
 
 ## Update checks
