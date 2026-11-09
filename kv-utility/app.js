@@ -14,7 +14,7 @@
     installBtn: $('install-btn'), banner: $('update-banner'), updateReload: $('update-reload'),
     updateDismiss: $('update-dismiss'), checkUpdate: $('check-update'), version: $('app-version'),
     tabStores: $('tab-stores'), tabFiles: $('tab-files'), paneStores: $('pane-stores'), paneFiles: $('pane-files'),
-    pathForm: $('path-form'), fsPath: $('fs-path'), upBtn: $('up-btn'), fsFilter: $('fs-filter'),
+    fsFilter: $('fs-filter'), refreshTreeBtn: $('refresh-tree-btn'), collapseBtn: $('collapse-btn'),
     fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'),
     appSelect: $('app-select'), appForget: $('app-forget'), appNote: $('app-note'),
     appDialog: $('app-dialog'), appSearch: $('app-search'), appStatus: $('app-status'), appResults: $('app-results'),
@@ -22,7 +22,7 @@
     layout: $('layout'), mobileNav: $('mobile-nav'),
     editorPanel: $('editor-panel'), docIcon: $('doc-icon'), docKind: $('doc-kind'), docTitle: $('doc-title'), docSub: $('doc-sub'),
     fileReload: $('file-reload'), fileCopy: $('file-copy'), fileClose: $('file-close'), newStoreBtn: $('new-store-btn'),
-    quickFolders: $('quick-folders'), crumbs: $('crumbs'), searchBtn: $('search-btn'), fsHint: $('fs-hint'),
+    fsHint: $('fs-hint'),
   };
 
   const DRAFT_KEY = 'kvutil:draft';
@@ -93,7 +93,6 @@
       try {
         const user = await puter.auth.getUser();
         state.username = user?.username || null;
-        renderQuickFolders();
         renderDocBar();
         els.userLabel.textContent = user?.username ? `@${user.username}` : '';
       } catch { els.userLabel.textContent = ''; }
@@ -207,7 +206,7 @@
         state.savedText = text;
         state.loadedFile = null;
         setSource(kvSource(name));
-        renderFiles();
+        renderFileTree();
         if (!state.keys.includes(name)) {
           state.keys.push(name);
           state.keys.sort((a, b) => a.localeCompare(b));
@@ -485,10 +484,9 @@
       if (els.appDialog.open) els.appDialog.close();
       if (state.app) await switchApp('');
       if (state.app) return false; // switch cancelled
-      els.fsPath.value = `~/AppData/${uid}`;
-      const willList = state.cwd === null && els.paneFiles.hidden; // setSideTab lists fsPath itself then
       setSideTab('files');
-      if (!willList) listDir(`~/AppData/${uid}`);
+      if (narrow.matches) setMobileView('files');
+      revealPath(`${homePath()}/AppData/${uid}`);
       toast("That app shares this app's ID, so its stores and files are this app's own");
       return true;
     }
@@ -526,11 +524,12 @@
     state.savedText = els.editor.value;
     setSource('');
     renderAppSelect();
-    renderQuickFolders();
     renderList();
     if (window.puter && puter.auth.isSignedIn()) {
       listStores();
-      if (!els.paneFiles.hidden) listDir(state.app ? `~/AppData/${state.app.uid}` : '~');
+      // The AppData fallback listing includes connected apps, so read it again.
+      resetNode(`${homePath()}/AppData`);
+      if (!els.paneFiles.hidden && state.app) revealPath(`${homePath()}/AppData/${state.app.uid}`).then(() => startIndex({ restart: true }));
     }
   }
 
@@ -545,10 +544,6 @@
   // Puter only lets a website read the user's special folders (and any other path)
   // after the user grants access, so listings can look incomplete until then.
   const SPECIAL_FOLDERS = ['Desktop', 'Documents', 'Pictures', 'Videos'];
-  const QUICK_FOLDERS = ['~', '~/Desktop', '~/Documents', '~/Pictures', '~/Videos', '~/Public', '~/AppData'];
-  const SEARCH_MAX_DEPTH = 10;
-  const SEARCH_MAX_SCANNED = 50000;
-  const SEARCH_MAX_RESULTS = 500;
 
   function expandHome(path) {
     path = (path || '').trim() || '~';
@@ -672,112 +667,7 @@
     }
   }
 
-  async function readFolder(target) {
-    let files;
-    try {
-      files = (await readdirAny(target)).map((it) => toEntry(it, target));
-    } catch (e) {
-      // Puter usually won't let an app list ~/AppData itself; still show the app folders it can open.
-      if (target !== `${homePath()}/AppData` || isNotFound(e)) throw e;
-      const known = [puter.appID, ...connectedApps().map((a) => a.uid)].filter(Boolean);
-      if (!known.length) throw e;
-      state.listNote = 'Only showing folders this app can open: Puter did not allow listing all of AppData. Use “Request access to this folder” to see every app.';
-      return [...new Set(known)].map((uid) => ({ name: uid, path: joinPath(target, uid), isDir: true, size: null }));
-    }
-    // Puter hides special folders from websites that have no access yet; always show them in Home
-    // so they can be opened (which asks for access).
-    if (target === homePath()) {
-      for (const name of SPECIAL_FOLDERS) {
-        if (!files.some((f) => f.name === name)) files.push({ name, path: joinPath(target, name), isDir: true, size: null });
-      }
-    }
-    return files.sort(byDirThenName);
-  }
 
-  async function listDir(path = els.fsPath.value, { autoRequest = true } = {}) {
-    if (!(await ensureSignedIn())) return;
-    if (!state.username) await refreshAuth();
-    const target = expandHome(path);
-    cancelSearch();
-    state.search = null;
-    state.listError = null;
-    state.listNote = null;
-    els.fsPath.value = prettyPath(target);
-    els.fileList.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: 'Loading…' }));
-    try {
-      let files;
-      try {
-        files = await readFolder(target);
-      } catch (e) {
-        // Special folders and other apps' folders need a one-time grant; ask straight away.
-        if (!autoRequest || isNotFound(e) || !(specialFolderOf(target) || appFolderOf(target))) throw e;
-        if (!(await requestAccess(target))) throw e;
-        files = await readFolder(target);
-      }
-      state.files = files;
-      els.fsFilter.value = '';
-      store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), fsPath: target });
-    } catch (e) {
-      state.files = [];
-      state.listError = { path: target, message: errMsg(e), canRequest: !isNotFound(e) };
-    }
-    state.cwd = target;
-    renderBreadcrumbs();
-    renderFiles();
-  }
-
-  function renderQuickFolders() {
-    els.quickFolders.replaceChildren();
-    const chips = QUICK_FOLDERS.map((p) => [p === '~' ? 'Home' : p.slice(2), p]);
-    if (state.app) chips.unshift([`${state.app.label} files`, `~/AppData/${state.app.uid}`]);
-    else if (window.puter?.appID) chips.unshift(["This app's files", `~/AppData/${puter.appID}`]);
-    for (const [label, p] of chips) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'chip';
-      if (p.endsWith(state.app?.uid ?? '\u0000') || (!state.app && window.puter?.appID && p.endsWith(puter.appID))) b.classList.add('chip-app');
-      b.textContent = label;
-      b.title = p;
-      b.addEventListener('click', () => listDir(p));
-      els.quickFolders.append(b);
-    }
-  }
-
-  function renderBreadcrumbs() {
-    els.crumbs.replaceChildren();
-    if (state.cwd === null) return;
-    const parts = state.cwd.split('/').filter(Boolean);
-    const add = (label, path, last) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'crumb';
-      b.textContent = label;
-      b.title = path;
-      if (last) b.setAttribute('aria-current', 'location');
-      else b.addEventListener('click', () => listDir(path));
-      els.crumbs.append(b);
-    };
-    add('/', '/', parts.length === 0);
-    parts.forEach((p, i) => {
-      els.crumbs.append(Object.assign(document.createElement('span'), { className: 'crumb-sep', textContent: '›' }));
-      add(p, `/${parts.slice(0, i + 1).join('/')}`, i === parts.length - 1);
-    });
-  }
-
-  function fileButton(f, showPath) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.title = f.path;
-    if (f.isDir) b.classList.add('dir');
-    if (f.path === state.loadedFile) b.classList.add('current');
-    if (!f.isDir && f.size !== null) b.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: formatBytes(f.size) }));
-    b.append(Object.assign(document.createElement('span'), { className: 'icon', textContent: f.isDir ? '📁' : '📄' }));
-    if (f.isDir && f.path === ownAppDir()) b.append(Object.assign(document.createElement('span'), { className: 'tag', textContent: 'this app' }));
-    b.append(document.createTextNode(f.name));
-    if (showPath) b.append(Object.assign(document.createElement('span'), { className: 'sub', textContent: prettyPath(parentOf(f.path)) }));
-    b.addEventListener('click', () => (f.isDir ? listDir(f.path) : openFile(f.path)));
-    return b;
-  }
 
   function emptyRow(text) {
     const li = document.createElement('li');
@@ -785,18 +675,6 @@
     li.textContent = text;
     return li;
   }
-
-  function accessButton(path, label) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'btn btn-sm';
-    b.textContent = label;
-    b.addEventListener('click', async () => {
-      if (await requestAccess(path)) listDir(state.cwd, { autoRequest: false });
-    });
-    return b;
-  }
-
   /** Normalise names so "tropical merge" also finds "Tropical_Merge" or "tropical-merge". */
   const squash = (s) => s.toLowerCase().replace(/[\s_\-.]+/g, '');
 
@@ -841,209 +719,378 @@
     return (e) => re.test(e.path);
   }
 
-  function renderFiles() {
-    els.fileList.replaceChildren();
-    els.fsHint.replaceChildren();
-    const s = state.search;
+  /* --- Explorer tree ---
+   * The Files tab shows Puter storage as a tree starting at the root ("/"). Folder contents are
+   * cached by path and loaded the first time a folder is expanded. A background indexer also
+   * walks every folder this app can read, so the search box can filter the whole tree as you type.
+   * Nothing is hidden: dot-files and dot-folders are listed too (dimmed). */
+  const ROOT = '/';
+  const MAX_ROWS = 1500;
+  const INDEX_MAX_ITEMS = 50000;
+  const INDEX_CONCURRENCY = 6;
+  const tree = {
+    nodes: new Map(), // path -> { path, name, isDir, size, children: string[] | null, loading, error, note }
+    expanded: new Set(store.get(PREFS_KEY, {}).expanded || []),
+    filterCollapsed: new Set(), // folders the user closed while a search is active
+    index: null, // { running, scanned, denied: string[], truncated }
+    initialised: false,
+  };
 
-    if (s) {
-      const head = document.createElement('li');
-      head.className = 'search-head';
-      head.textContent = s.done
-        ? `${s.results.length}${s.results.length >= SEARCH_MAX_RESULTS ? '+' : ''} match${s.results.length === 1 ? '' : 'es'} for “${s.query}” in ${prettyPath(s.root)}`
-        : `Searching ${prettyPath(s.root)}… ${s.scanned} items checked`;
-      const ctl = document.createElement('button');
-      ctl.type = 'button';
-      ctl.className = 'link';
-      ctl.textContent = s.done ? 'Back to folder' : 'Stop';
-      ctl.addEventListener('click', () => {
-        if (s.done) { state.search = null; els.fsFilter.value = ''; renderFiles(); } else cancelSearch();
-      });
-      head.append(' ', ctl);
-      els.fileList.append(head);
-      for (const f of s.results) {
-        const li = document.createElement('li');
-        li.append(fileButton(f, true));
-        els.fileList.append(li);
-      }
-      if (s.done && !s.results.length) els.fileList.append(emptyRow('Nothing found. The folder may be in a place this app has not been given access to yet.'));
-      if (s.error) els.fileList.append(emptyRow(`Some folders could not be searched: ${s.error}`));
-      if (s.truncated) els.fileList.append(emptyRow('Search stopped early because there were too many items; search from a smaller folder.'));
-      if (s.done && s.skipped.length) {
-        const li = emptyRow(`Not searched yet because this app has no access: ${s.skipped.map((d) => d.split('/').pop()).join(', ')}.`);
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'btn btn-sm';
-        b.textContent = 'Grant access and search again';
-        b.addEventListener('click', async () => {
-          if (await requestFolders(s.skipped)) searchFolders(s.query);
-        });
-        li.append(document.createElement('br'), b);
-        els.fileList.append(li);
-      }
-      els.fileCount.textContent = '';
-      renderAccessHint();
-      return;
+  function nodeFor(path, info) {
+    let n = tree.nodes.get(path);
+    if (!n) {
+      n = { path, name: path === ROOT ? '/' : path.split('/').pop(), isDir: true, size: null, children: null, loading: null, error: null, note: null };
+      tree.nodes.set(path, n);
     }
-
-    if (state.listError) {
-      const li = emptyRow(`Cannot open ${prettyPath(state.listError.path)}: ${state.listError.message}`);
-      li.classList.add('error-row');
-      if (state.listError.canRequest) {
-        li.append(document.createElement('br'), accessButton(state.listError.path, 'Request access to this folder'));
-      }
-      els.fileList.append(li);
-      els.fileCount.textContent = '';
-      return;
-    }
-
-    if (state.listNote) {
-      const li = emptyRow(state.listNote);
-      li.classList.add('note-row');
-      els.fileList.append(li);
-    }
-    const match = nameMatcher(els.fsFilter.value);
-    const files = els.fsFilter.value.trim() ? state.files.filter(match) : state.files;
-    if (!files.length) {
-      els.fileList.append(emptyRow(state.cwd === null ? 'Choose a folder above, or enter a path and click “Go”.'
-        : state.files.length ? 'Nothing here matches. Press Enter or “Search subfolders” to look deeper.' : 'This folder is empty (or this app cannot see inside it yet).'));
-    }
-    for (const f of files) {
-      const li = document.createElement('li');
-      li.append(fileButton(f, false));
-      els.fileList.append(li);
-    }
-    els.fileCount.textContent = state.cwd === null ? '' : `${files.length} of ${state.files.length} item${state.files.length === 1 ? '' : 's'}`;
-    renderAccessHint();
+    if (info) Object.assign(n, info);
+    return n;
   }
 
-  function renderAccessHint() {
-    if (state.cwd === null) return;
+  function saveExpanded() {
+    store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), expanded: [...tree.expanded] });
+  }
+
+  /** List a folder, adding the places Puter tends to hide from websites so they can still be opened. */
+  async function listChildren(path) {
     const home = homePath();
-    const p = document.createElement('p');
-    p.className = 'muted small';
-    p.append('Missing a folder? ');
-    if (state.cwd === home) {
-      p.append('Files an app saves with a relative path are in AppData/<app id> (“This app\'s files” for apps on the same site; otherwise pick the app under “Data from”). ');
-      p.append('Folders on your Puter desktop are inside ');
-      const d = document.createElement('button');
-      d.type = 'button';
-      d.className = 'link';
-      d.textContent = 'Desktop';
-      d.addEventListener('click', () => listDir('~/Desktop'));
-      p.append(d, '. ');
-    }
-    const r = document.createElement('button');
-    r.type = 'button';
-    r.className = 'link';
-    r.textContent = 'Request access to this folder';
-    r.addEventListener('click', async () => {
-      if (await requestAccess(state.cwd)) listDir(state.cwd, { autoRequest: false });
-    });
-    p.append(r);
-    els.fsHint.append(p);
-  }
-
-  /* --- Deep search --- */
-  let searchController = null;
-
-  function cancelSearch() {
-    if (searchController) searchController.abort();
-    searchController = null;
-  }
-
-  /** Yield arrays of entries under `root`: server-side recursive listing when available, else a walk. */
-  async function* walkTree(root, signal) {
-    let yielded = false;
+    let entries;
+    let note = null;
     try {
-      const iter = puter.fs.readdir({ path: root, recursive: true, depth: SEARCH_MAX_DEPTH, stream: true });
-      // Older Puter.js returns a promise here instead of an iterator; don't leave its rejection unhandled.
-      if (iter && typeof iter.then === 'function') iter.catch(() => {});
-      if (iter && typeof iter[Symbol.asyncIterator] === 'function') {
-        for await (const page of iter) {
-          if (signal.aborted) return;
-          const items = Array.isArray(page) ? page : (page?.items ?? []);
-          yielded = true;
-          yield items.map((it) => toEntry(it, root));
-        }
-        return;
-      }
+      entries = (await readdirAny(path)).map((it) => toEntry(it, path));
     } catch (e) {
-      if (yielded) throw e;
-      // Older Puter.js or backend: fall back to walking folder by folder.
-    }
-    let level = [root];
-    for (let depth = 0; depth < SEARCH_MAX_DEPTH && level.length && !signal.aborted; depth++) {
-      const next = [];
-      for (let i = 0; i < level.length && !signal.aborted; i += 6) {
-        const batch = await Promise.all(level.slice(i, i + 6).map(async (dir) => {
-          try { return (await readdirAny(dir)).map((it) => toEntry(it, dir)); } catch { return []; }
-        }));
-        for (const entries of batch) {
-          next.push(...entries.filter((e) => e.isDir).map((e) => e.path));
-          yield entries;
-        }
+      if (path === ROOT && home) {
+        entries = []; // the root usually can't be listed; show the home folder anyway
+      } else if (path === `${home}/AppData` && !isNotFound(e)) {
+        const known = [...new Set([window.puter?.appID, ...connectedApps().map((a) => a.uid)].filter(Boolean))];
+        if (!known.length) throw e;
+        note = 'Puter did not allow listing all of AppData, so only the app folders this app can open are shown.';
+        entries = known.map((uid) => ({ name: uid, path: joinPath(path, uid), isDir: true, size: null }));
+      } else {
+        throw e;
       }
-      level = next;
+    }
+    const ensureDir = (name) => {
+      if (!entries.some((f) => f.name === name)) entries.push({ name, path: joinPath(path, name), isDir: true, size: null });
+    };
+    if (path === ROOT && state.username) ensureDir(state.username);
+    if (path === home) { SPECIAL_FOLDERS.forEach(ensureDir); ensureDir('AppData'); }
+    return { entries: entries.sort(byDirThenName), note };
+  }
+
+  /** Load a folder's children into the cache (once). With autoRequest, ask for access to special/app folders. */
+  async function loadNode(path, { autoRequest = false } = {}) {
+    const n = nodeFor(path);
+    if (n.children) return n;
+    if (n.loading) { await n.loading; return n; }
+    n.loading = (async () => {
+      try {
+        let res;
+        try {
+          res = await listChildren(path);
+        } catch (e) {
+          if (!autoRequest || isNotFound(e) || !(specialFolderOf(path) || appFolderOf(path))) throw e;
+          if (!(await requestAccess(path))) throw e;
+          res = await listChildren(path);
+        }
+        n.children = res.entries.map((e) => nodeFor(e.path, { name: e.name, isDir: e.isDir, size: e.size }).path);
+        n.note = res.note;
+        n.error = null;
+      } catch (e) {
+        n.children = null;
+        n.error = { message: errMsg(e), canRequest: !isNotFound(e) };
+      } finally {
+        n.loading = null;
+      }
+    })();
+    await n.loading;
+    return n;
+  }
+
+  /** Forget a folder's contents (and its subfolders') so they are read again. */
+  function resetNode(path) {
+    for (const [p, n] of tree.nodes) {
+      if (p === path || p.startsWith(path === ROOT ? '/' : `${path}/`)) { n.children = null; n.error = null; n.note = null; }
     }
   }
 
-  async function searchFolders(query = els.fsFilter.value.trim()) {
-    if (!query) { toast('Type part of a file or folder name first', true); els.fsFilter.focus(); return; }
-    if (!(await ensureSignedIn())) return;
+  /** Start (or restart) walking every readable folder in the background. */
+  async function startIndex({ restart = false } = {}) {
+    if (!window.puter || !puter.auth.isSignedIn()) return;
+    if (tree.index?.running && !restart) return;
     if (!state.username) await refreshAuth();
-    const root = state.cwd ?? expandHome(els.fsPath.value);
-    cancelSearch();
-    const controller = new AbortController();
-    searchController = controller;
-    const match = nameMatcher(query);
-    const s = { query, root, results: [], scanned: 0, done: false, error: null, truncated: false, skipped: [] };
-    state.search = s;
-    renderFiles();
-    let lastPaint = 0;
-    const seenDirs = new Set();
-    const scan = async (start) => {
-      for await (const entries of walkTree(start, controller.signal)) {
-        if (controller.signal.aborted) return false;
-        s.scanned += entries.length;
-        for (const e of entries) {
-          if (e.isDir) seenDirs.add(e.path);
-          if (s.results.length < SEARCH_MAX_RESULTS && match(e) && !s.results.some((r) => r.path === e.path)) s.results.push(e);
+    const idx = { running: true, scanned: 0, denied: [], truncated: false };
+    tree.index = idx;
+    const queue = [ROOT];
+    const seen = new Set();
+    let active = 0;
+    await new Promise((resolve) => {
+      const pump = () => {
+        if (tree.index !== idx) { resolve(); return; }
+        while (active < INDEX_CONCURRENCY && queue.length && !idx.truncated) {
+          const path = queue.shift();
+          if (seen.has(path)) continue;
+          seen.add(path);
+          active++;
+          loadNode(path).then((n) => {
+            if (n.error) {
+              if (n.error.canRequest && path !== ROOT) idx.denied.push(path);
+              return;
+            }
+            for (const c of n.children) {
+              idx.scanned++;
+              if (tree.nodes.get(c).isDir) queue.push(c);
+            }
+            if (idx.scanned >= INDEX_MAX_ITEMS) idx.truncated = true;
+          }).finally(() => {
+            active--;
+            renderFileTree();
+            pump();
+          });
         }
-        if (s.scanned >= SEARCH_MAX_SCANNED) { s.truncated = true; return false; }
-        if (Date.now() - lastPaint > 150 && state.search === s) { lastPaint = Date.now(); renderFiles(); }
+        if (!active) resolve();
+      };
+      pump();
+    });
+    if (tree.index === idx) {
+      idx.running = false;
+      renderFileTree();
+    }
+  }
+
+  /** First time the Files tab is shown: open the root and home folder, then index in the background. */
+  async function initTree() {
+    if (!window.puter || !puter.auth.isSignedIn()) { renderFileTree(); return; }
+    if (!state.username) await refreshAuth();
+    if (!tree.initialised) {
+      tree.initialised = true;
+      if (!store.get(PREFS_KEY, {}).expanded) {
+        tree.expanded.add(ROOT);
+        if (homePath()) tree.expanded.add(homePath());
+        saveExpanded();
       }
+      // Load what is expanded first so the tree appears quickly.
+      for (const p of [...tree.expanded].sort((a, b) => a.length - b.length)) await loadNode(p);
+      renderFileTree();
+    }
+    startIndex();
+  }
+
+  function refreshTree() {
+    resetNode(ROOT);
+    renderFileTree();
+    (async () => {
+      for (const p of [...tree.expanded].sort((a, b) => a.length - b.length)) await loadNode(p);
+      renderFileTree();
+      startIndex({ restart: true });
+    })();
+  }
+
+  async function toggleFolder(path, { openedBySearch = false } = {}) {
+    if (openedBySearch) {
+      // Folder shown open because it contains matches: clicking closes/reopens it for this search only.
+      if (tree.filterCollapsed.has(path)) tree.filterCollapsed.delete(path); else tree.filterCollapsed.add(path);
+      renderFileTree();
+      return;
+    }
+    if (tree.expanded.has(path)) {
+      tree.expanded.delete(path);
+      saveExpanded();
+      renderFileTree();
+      return;
+    }
+    tree.expanded.add(path);
+    saveExpanded();
+    renderFileTree();
+    const n = await loadNode(path, { autoRequest: true });
+    renderFileTree();
+    if (!n.error && tree.index && !tree.index.running && n.children?.some((c) => tree.nodes.get(c).isDir)) startIndex({ restart: true });
+  }
+
+  /** Expand the folders leading to `path` (and `path` itself if it is a folder) and scroll it into view. */
+  async function revealPath(path) {
+    if (!path || !path.startsWith('/')) return;
+    els.fsFilter.value = '';
+    tree.filterCollapsed.clear();
+    tree.expanded.add(ROOT);
+    let cur = ROOT;
+    for (const part of path.split('/').filter(Boolean)) {
+      await loadNode(cur, { autoRequest: true });
+      cur = joinPath(cur, part);
+      const n = nodeFor(cur);
+      if (n.isDir) tree.expanded.add(cur);
+    }
+    if (nodeFor(path).isDir) await loadNode(path, { autoRequest: true });
+    saveExpanded();
+    doRenderFileTree();
+    const el = [...els.fileList.querySelectorAll('button.node')].find((b) => b.dataset.path === path);
+    el?.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function grantDenied() {
+    const denied = tree.index?.denied || [];
+    if (!denied.length || !(await requestFolders(denied))) return;
+    denied.forEach(resetNode);
+    startIndex({ restart: true });
+  }
+
+  /* --- Rendering --- */
+  function renderFileTree() {
+    if (renderFileTree.pending) return;
+    renderFileTree.pending = true;
+    requestAnimationFrame(() => { renderFileTree.pending = false; doRenderFileTree(); });
+  }
+
+  function statusRow(depth, text, cls) {
+    const li = document.createElement('li');
+    li.className = `tree-status-row ${cls || ''}`;
+    li.style.setProperty('--depth', depth);
+    li.setAttribute('role', 'none');
+    li.textContent = text;
+    return li;
+  }
+
+  function doRenderFileTree() {
+    const q = els.fsFilter.value.trim();
+    const match = q ? nameMatcher(q) : null;
+    const frag = document.createDocumentFragment();
+    let rows = 0;
+    let matches = 0;
+    let truncated = false;
+
+    const selfMemo = new Map();
+    const selfMatch = (path) => {
+      if (!match || path === ROOT) return false;
+      if (!selfMemo.has(path)) selfMemo.set(path, match(tree.nodes.get(path)));
+      return selfMemo.get(path);
+    };
+    const descMemo = new Map();
+    const descMatch = (path) => {
+      if (descMemo.has(path)) return descMemo.get(path);
+      descMemo.set(path, false); // guard
+      const n = tree.nodes.get(path);
+      const r = !!n?.children?.some((c) => selfMatch(c) || (tree.nodes.get(c).isDir && descMatch(c)));
+      descMemo.set(path, r);
+      return r;
+    };
+
+    const own = ownAppDir();
+    const addRow = (n, depth, open, openedBySearch, isMatch) => {
+      if (rows >= MAX_ROWS) { truncated = true; return false; }
+      rows++;
+      const li = document.createElement('li');
+      li.setAttribute('role', 'treeitem');
+      li.setAttribute('aria-level', String(depth + 1));
+      if (n.isDir) li.setAttribute('aria-expanded', String(open));
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'node';
+      b.dataset.path = n.path;
+      b.title = prettyPath(n.path);
+      b.style.setProperty('--depth', depth);
+      if (n.name.startsWith('.')) b.classList.add('hidden-entry');
+      if (n.path === state.loadedFile) b.classList.add('current');
+      if (isMatch) b.classList.add('match');
+      b.append(Object.assign(document.createElement('span'), { className: 'caret', textContent: n.isDir ? (n.loading ? '…' : open ? '▾' : '▸') : '' }));
+      b.append(Object.assign(document.createElement('span'), { className: 'icon', textContent: n.isDir ? (open ? '📂' : '📁') : '📄' }));
+      b.append(Object.assign(document.createElement('span'), { className: 'name', textContent: n.path === ROOT ? '/' : n.name }));
+      if (n.path === own) b.append(Object.assign(document.createElement('span'), { className: 'tag', textContent: 'this app' }));
+      else if (n.path === homePath()) b.append(Object.assign(document.createElement('span'), { className: 'tag', textContent: 'home' }));
+      if (!n.isDir && n.size !== null) b.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: formatBytes(n.size) }));
+      b.addEventListener('click', () => (n.isDir ? toggleFolder(n.path, { openedBySearch }) : openFile(n.path)));
+      li.append(b);
+      frag.append(li);
       return true;
     };
-    try {
-      let more = await scan(root);
-      // Special folders are often missing from the home listing, so search them directly too.
-      const home = homePath();
-      const extra = root === home || root === '/'
-        ? [...SPECIAL_FOLDERS.map((n) => joinPath(home, n)), ownAppDir(), ...connectedApps().map((a) => `${home}/AppData/${a.uid}`)].filter(Boolean)
-        : [];
-      for (const dir of extra) {
-        if (!more || controller.signal.aborted) break;
-        if (seenDirs.has(dir)) continue;
-        try {
-          await readdirAny(dir);
-        } catch (e) {
-          if (!isNotFound(e)) s.skipped.push(dir);
-          continue;
+
+    const addFolderStatus = (n, depth) => {
+      if (n.loading && !n.children) frag.append(statusRow(depth, 'Loading…'));
+      if (n.note) frag.append(statusRow(depth, n.note, 'note'));
+      if (n.error) {
+        const li = statusRow(depth, n.error.canRequest ? 'No access yet. ' : `Cannot open: ${n.error.message}`, 'error');
+        if (n.error.canRequest) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn btn-sm';
+          btn.textContent = 'Request access';
+          btn.addEventListener('click', async () => {
+            if (!(await requestAccess(n.path))) return;
+            resetNode(n.path);
+            await loadNode(n.path);
+            renderFileTree();
+            startIndex({ restart: true });
+          });
+          li.append(btn);
         }
-        const name = dir.split('/').pop();
-        const entry = { name, path: dir, isDir: true, size: null };
-        if (match(entry)) s.results.push(entry);
-        more = await scan(dir);
+        frag.append(li);
       }
-    } catch (e) {
-      s.error = errMsg(e);
+      if (n.children && !n.children.length && !n.note) frag.append(statusRow(depth, 'Empty folder', 'empty'));
+    };
+
+    // Plain browsing: everything under expanded folders.
+    const browse = (path, depth) => {
+      const n = nodeFor(path);
+      const open = n.isDir && tree.expanded.has(path);
+      if (!addRow(n, depth, open, false, false)) return;
+      if (!open) return;
+      if (n.children) for (const c of n.children) { browse(c, depth + 1); if (truncated) return; }
+      addFolderStatus(n, depth + 1);
+    };
+
+    // Searching: only matches and the folders leading to them.
+    const search = (path, depth) => {
+      const n = nodeFor(path);
+      const self = selfMatch(path);
+      const desc = n.isDir && descMatch(path);
+      if (path !== ROOT && !self && !desc) return;
+      if (self) matches++;
+      if (desc) {
+        const open = !tree.filterCollapsed.has(path);
+        if (!addRow(n, depth, open, true, self)) return;
+        if (open) for (const c of n.children) { search(c, depth + 1); if (truncated) return; }
+      } else if (path === ROOT) {
+        addRow(n, depth, false, false, false);
+      } else {
+        // A matching folder with no matching contents: browse into it normally if the user opens it.
+        const open = n.isDir && tree.expanded.has(path);
+        if (!addRow(n, depth, open, false, true)) return;
+        if (open) {
+          if (n.children) for (const c of n.children) { browse(c, depth + 1); if (truncated) return; }
+          addFolderStatus(n, depth + 1);
+        }
+      }
+    };
+
+    if (match) search(ROOT, 0); else browse(ROOT, 0);
+
+    const idx = tree.index;
+    if (match && !matches) {
+      frag.append(statusRow(1, idx?.running ? 'No matches yet — still reading folders…' : 'No matches.', 'empty'));
     }
-    if (searchController === controller) searchController = null;
-    s.done = true;
-    // Folders first, then shallower paths, then name.
-    s.results.sort((a, b) => (b.isDir - a.isDir) || (a.path.split('/').length - b.path.split('/').length) || a.name.localeCompare(b.name));
-    if (state.search === s) renderFiles();
+    if (truncated) frag.append(statusRow(1, `Showing the first ${MAX_ROWS} rows — type more to narrow the search.`, 'note'));
+    els.fileList.replaceChildren(frag);
+
+    // Status line: matches and indexing progress.
+    const parts = [];
+    if (match) parts.push(`${matches}${truncated ? '+' : ''} match${matches === 1 ? '' : 'es'}`);
+    if (idx?.running) parts.push(`reading folders… ${idx.scanned} items`);
+    else if (idx && match) parts.push(`searched ${idx.scanned} items${idx.truncated ? ' (limit reached)' : ''}`);
+    els.fileCount.textContent = parts.join(' · ');
+
+    // Folders that could not be read (and so were not searched).
+    els.fsHint.replaceChildren();
+    if (idx && !idx.running && idx.denied.length) {
+      const p = document.createElement('p');
+      p.className = 'muted small';
+      const names = idx.denied.map((d) => prettyPath(d));
+      p.append(`Not readable yet (not searched): ${names.slice(0, 4).join(', ')}${names.length > 4 ? ` +${names.length - 4} more` : ''}. `);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'link';
+      b.textContent = 'Grant access';
+      b.addEventListener('click', grantDenied);
+      p.append(b);
+      els.fsHint.append(p);
+    }
   }
 
   /** Turn a Blob into editor text; JSON is pretty-printed, binary is rejected. */
@@ -1066,7 +1113,7 @@
     // Suggested name for "Copy to KV store" (the KV controls are hidden while a file is open).
     els.storeName.value = name.replace(/\.[^.]+$/, '');
     onEditorChange();
-    renderFiles();
+    renderFileTree();
     toast(`Opened ${name} (read-only)`);
     showEditorOnPhone();
   }
@@ -1100,7 +1147,7 @@
       loadFileText(await blobToText(blob, item.name), item.path || item.name);
       if (item.path) {
         const dir = parentOf(item.path);
-        if (dir !== state.cwd) listDir(dir);
+        revealPath(item.path);
       }
     } catch (e) {
       if (e?.name === 'AbortError' || /cancel/i.test(errMsg(e))) return;
@@ -1123,7 +1170,7 @@
         if (b.dataset.view === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
       }
     }
-    if (files && state.cwd === null && window.puter && puter.auth.isSignedIn()) listDir();
+    if (files) initTree();
   }
 
   /* ---------- Phone layout ----------
@@ -1155,7 +1202,7 @@
     setSource(source);
     onEditorChange();
     renderList();
-    renderFiles();
+    renderFileTree();
   }
 
   function setSource(source) {
@@ -1566,11 +1613,23 @@
   els.fileClose.addEventListener('click', closeFile);
   els.tabStores.addEventListener('click', () => setSideTab('stores'));
   els.tabFiles.addEventListener('click', () => setSideTab('files'));
-  els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });
-  els.upBtn.addEventListener('click', () => listDir(parentOf(state.cwd ?? expandHome(els.fsPath.value))));
-  els.fsFilter.addEventListener('input', () => { if (!state.search) renderFiles(); });
-  els.fsFilter.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchFolders(); } });
-  els.searchBtn.addEventListener('click', () => searchFolders());
+  els.fsFilter.addEventListener('input', () => {
+    tree.filterCollapsed.clear();
+    renderFileTree();
+    startIndex();
+  });
+  els.fsFilter.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { els.fsFilter.value = ''; tree.filterCollapsed.clear(); renderFileTree(); }
+    if (e.key === 'Enter') e.preventDefault();
+  });
+  els.refreshTreeBtn.addEventListener('click', refreshTree);
+  els.collapseBtn.addEventListener('click', () => {
+    tree.expanded.clear();
+    tree.expanded.add(ROOT);
+    tree.filterCollapsed.clear();
+    saveExpanded();
+    renderFileTree();
+  });
   els.pickFileBtn.addEventListener('click', pickFile);
   els.storeName.addEventListener('keydown', (e) => { if (e.key === 'Enter') getStore(); });
   els.storeName.addEventListener('input', saveDraft);
@@ -1597,15 +1656,12 @@
     if (puter.auth.isSignedIn()) {
       puter.auth.signOut();
       state.keys = [];
-      cancelSearch();
-      state.files = [];
-      state.cwd = null;
-      state.search = null;
-      state.listError = null;
+      tree.nodes.clear();
+      tree.index = null;
+      tree.initialised = false;
       state.username = null;
-      renderBreadcrumbs();
       renderList();
-      renderFiles();
+      renderFileTree();
       await refreshAuth();
       toast('Signed out');
     } else if (await ensureSignedIn()) {
@@ -1744,7 +1800,6 @@
       state.loadedFile = draft.loadedFile ?? null;
       setSource(draft.source || '');
     }
-    if (prefs.fsPath) els.fsPath.value = prefs.fsPath;
     if (prefs.tab === 'files') setSideTab('files');
     if (prefs.mobileView === 'editor') setMobileView('editor');
     onEditorChange();
@@ -1756,7 +1811,6 @@
     state.app = connectedApps().find((a) => a.uid === prefs.currentApp) || null;
   }
   renderAppSelect();
-  renderQuickFolders();
   restore();
   initServiceWorker();
   refreshAuth().then((signedIn) => {
