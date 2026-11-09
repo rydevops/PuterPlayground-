@@ -7,26 +7,23 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
 ## Features
 
 - **Stores:** type a store name, then **Get**, **Save**, **New** or **Delete**. **↻ List** lists every store, and the filter box takes a substring or a glob (`config:*`).
-- **Puter files (read-only):** the **Files** tab in the sidebar browses your Puter cloud storage.
-  - **Quick folders** (Home, Desktop, Documents, Pictures, Videos, Public, AppData), clickable **breadcrumbs**, a path box (`~` is your home folder) and **↑**.
-  - **Search subfolders:** type part of a name and press Enter. Matching ignores case, spaces, `-` and `_`, so `tropical merge` also finds `Tropical_Merge`. Searching from Home also covers Desktop, Documents, Pictures and Videos.
-  - **Wildcards** work in both the filter and the search, ignoring case:
-    - `*` matches any characters within a name, `?` matches exactly one character, and `**` matches any number of folders.
-    - Without a `/`, a pattern matches file names: `*.json`, `save-??.json`.
-    - With a `/`, it matches the end of the path: `tropical-merge/*.json`, `Documents/**/save.json`.
-    - Starting with `/` or `~`, it matches the whole path: `~/AppData/*/tropical-merge/save.json`.
-  - Click a file to open it in the editor. JSON is pretty-printed, other text opens as-is, and binary files or files over 10 MB are refused. **Pick file…** opens Puter's own file picker instead.
+- **Puter files (read-only):** the **Files** tab shows your Puter storage as an explorer tree that starts at the root (`/`), with your home folder already open.
+  - **Browsing:** click or tap a folder to expand or collapse it; its contents load the first time it opens. Click or tap a file to open it in the editor. Everything is listed, including hidden dot-files and dot-folders, which are dimmed.
+  - **Toolbar:** **⊟** collapses every folder, **↻** reads the folders again, and **Pick file…** opens Puter's own file picker.
+  - **Search as you type:** every keystroke filters the whole tree down to the files and folders that match, plus the folders that lead to them. To make that work for folders you haven't opened yet, the app reads every folder it can in the background when the Files tab opens, and results fill in as it goes. Escape clears the search.
+    - Plain text matches part of a name, ignoring case, spaces, `-` and `_`, so `tropical merge` also finds `Tropical_Merge`.
+    - **Wildcards:** `*` matches any characters within a name, `?` matches one character, and `**` matches any number of folders. Without a `/` a pattern matches names (`*.json`, `save-??.json`). With a `/` it matches the end of the path (`tropical-merge/*.json`, `Documents/**/save.json`). Starting with `/` or `~` it matches the whole path.
+  - Opened files: JSON is pretty-printed, other text opens as-is, and binary files or files over 10 MB are refused.
   - A header at the top of the editor always shows what is open. For a store it shows the store name, which app's data it is, and whether there are unsaved changes. For a file it shows the file name, its folder, and that it is read-only.
   - While a file is open, the key-value controls are hidden. The header offers **Reload**, **Copy to KV store…** (pick a store name, then **Save to KV store**) and **Close**. Files themselves are never changed.
 
-  **Folder access:** Puter only lets a website read your Desktop, Documents, Pictures, Videos or any other folder after you allow it. Until then those folders can look empty or be missing, and **folders you create on the Puter desktop live in `~/Desktop`**.
-  - Opening one of those folders asks for access automatically.
-  - A search lists the folders it couldn't check, with a **Grant access and search again** button.
-  - **Request access to this folder** below the list covers any other folder.
-- **This app's files:** the **This app's files** chip opens `~/AppData/<this app's id>`. Apps served from the same site share one app ID, and so share the same folder and key-value store. For example, a file another app on the same site saved with `puter.fs.write('tropical-merge/save.json', …)` is at `This app's files › tropical-merge › save.json`.
+  **Folder access:** Puter only lets a website read your Desktop, Documents, Pictures, Videos or other folders after you allow it, and **folders you create on the Puter desktop live in `~/Desktop`**.
+  - Expanding Desktop, Documents, Pictures, Videos or an app's folder asks for access automatically.
+  - Any other folder that can't be read shows **Request access** in the tree.
+  - Folders the background reading couldn't open (and so couldn't search) are listed under the tree, with **Grant access**.
+- **This app's files:** apps served from the same site share one app ID, and so share the same folder, `~/AppData/<app id>` (tagged "this app" in the tree), and the same key-value store. For example, a file another app on the same site saved with `puter.fs.write('tropical-merge/save.json', …)` is at `AppData › <app id> › tropical-merge › save.json`.
   - If Puter won't list all of `~/AppData`, the AppData folder still shows the app folders this app can open.
-  - Picking this app in the app picker, or entering its ID, opens its folder.
-  - A search from Home includes this folder.
+  - Picking this app in the app picker, or entering its ID, opens its folder in the tree.
 - **Other apps' data:** every Puter app, including every website that uses Puter.js, has its own key-value namespace and its own folder, `~/AppData/<app id>`.
   - A relative path such as `puter.fs.write('tropical-merge/save.json', …)` is saved in that folder.
   - To work with another app's data, choose **Data from → Connect another app…**. A picker lists the apps on your account, found in two places:
@@ -34,7 +31,7 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
     - every app that has a folder in `~/AppData`, which includes plain websites that use Puter.js. Unnamed apps are labelled by what their folder contains, for example "App with tropical-merge".
   - The first time, **Allow access to find more apps** asks for both sources in one Puter prompt. The filter box matches names, sites, IDs and folder contents.
   - Picking an app asks once for access to its key-value store (read, write, delete) and its files (read). You can still enter an app ID or name by hand.
-  - Stores, Get, Save and Delete then use that app's key-value store. A **<app> files** chip opens its folder, and a search from Home also covers it.
+  - Stores, Get, Save and Delete then use that app's key-value store, and its folder opens in the tree.
   - Opening an app's folder under **AppData** asks for access automatically.
 - **JSON editor:**
   - Line numbers, plus a cursor position and size readout.

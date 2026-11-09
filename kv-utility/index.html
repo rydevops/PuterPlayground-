@@ -62,21 +62,17 @@
       <div id="pane-files" class="side-pane" role="tabpanel" hidden>
         <div class="panel-head">
           <h2>Puter files</h2>
-          <button id="pick-file-btn" class="btn btn-sm" title="Choose a file with the Puter file picker">Pick file…</button>
+          <div class="head-actions">
+            <button id="collapse-btn" class="btn btn-sm" type="button" title="Collapse all folders" aria-label="Collapse all folders">⊟</button>
+            <button id="refresh-tree-btn" class="btn btn-sm" type="button" title="Read folders again" aria-label="Refresh">↻</button>
+            <button id="pick-file-btn" class="btn btn-sm" type="button" title="Choose a file with the Puter file picker">Pick file…</button>
+          </div>
         </div>
-        <form id="path-form" class="path-bar">
-          <button id="up-btn" type="button" class="btn btn-sm" title="Parent folder">↑</button>
-          <input id="fs-path" class="input mono" type="text" value="~" spellcheck="false" autocomplete="off" aria-label="Folder path">
-          <button class="btn btn-sm" type="submit">Go</button>
-        </form>
-        <div id="quick-folders" class="quick-folders" aria-label="Quick folders"></div>
-        <nav id="crumbs" class="crumbs" aria-label="Current folder"></nav>
         <div class="search-bar">
-          <input id="fs-filter" class="input" type="search" placeholder="Filter or *.json · Enter searches subfolders" title="Plain text matches part of a name. Wildcards: * any characters, ? one character, ** any folders — e.g. *.json, save-??.json, tropical-merge/*.json" autocomplete="off" aria-label="Filter or search files (wildcards * and ? supported)">
-          <button id="search-btn" class="btn btn-sm" type="button" title="Search this folder and all its subfolders">Search subfolders</button>
+          <input id="fs-filter" class="input" type="search" placeholder="Search files and folders, e.g. save or *.json" title="Filters the whole tree as you type. Plain text matches part of a name. Wildcards: * any characters, ? one character, ** any folders — e.g. *.json, save-??.json, tropical-merge/*.json" autocomplete="off" spellcheck="false" aria-label="Search files and folders (wildcards * and ? supported)" aria-controls="file-list">
         </div>
-        <ul id="file-list" class="store-list" aria-live="polite"></ul>
-        <p id="file-count" class="muted small"></p>
+        <p id="file-count" class="tree-status muted small" aria-live="polite"></p>
+        <ul id="file-list" class="tree" role="tree" aria-label="Puter files"></ul>
         <div id="fs-hint" class="fs-hint"></div>
       </div>
     </aside>
