@@ -15,11 +15,13 @@
     updateDismiss: $('update-dismiss'), checkUpdate: $('check-update'), version: $('app-version'),
     tabStores: $('tab-stores'), tabFiles: $('tab-files'), paneStores: $('pane-stores'), paneFiles: $('pane-files'),
     pathForm: $('path-form'), fsPath: $('fs-path'), upBtn: $('up-btn'), fsFilter: $('fs-filter'),
-    fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'), source: $('source'),
+    fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'),
     appSelect: $('app-select'), appForget: $('app-forget'), appNote: $('app-note'),
     appDialog: $('app-dialog'), appSearch: $('app-search'), appStatus: $('app-status'), appResults: $('app-results'),
     appAllow: $('app-allow'), appManual: $('app-manual'), appManualGo: $('app-manual-go'),
-    layout: $('layout'), mobileNav: $('mobile-nav'), newStoreBtn: $('new-store-btn'),
+    layout: $('layout'), mobileNav: $('mobile-nav'),
+    editorPanel: $('editor-panel'), docIcon: $('doc-icon'), docKind: $('doc-kind'), docTitle: $('doc-title'), docSub: $('doc-sub'),
+    fileReload: $('file-reload'), fileCopy: $('file-copy'), fileClose: $('file-close'), newStoreBtn: $('new-store-btn'),
     quickFolders: $('quick-folders'), crumbs: $('crumbs'), searchBtn: $('search-btn'), fsHint: $('fs-hint'),
   };
 
@@ -92,6 +94,7 @@
         const user = await puter.auth.getUser();
         state.username = user?.username || null;
         renderQuickFolders();
+        renderDocBar();
         els.userLabel.textContent = user?.username ? `@${user.username}` : '';
       } catch { els.userLabel.textContent = ''; }
     } else {
@@ -177,6 +180,12 @@
   }
 
   async function saveStore() {
+    if (state.loadedFile && !els.editorPanel.classList.contains('copying')) {
+      setCopying(true);
+      els.storeName.focus();
+      toast('Files are read-only here. Choose a store name, then “Save to KV store”.');
+      return;
+    }
     const name = els.storeName.value.trim();
     if (!name) { toast('Enter a store name first', true); els.storeName.focus(); return; }
     const text = els.editor.value;
@@ -1008,16 +1017,15 @@
 
   function loadFileText(text, path) {
     const name = path.split('/').pop();
-    const suggest = (p) => (p ? p.split('/').pop().replace(/\.[^.]+$/, '') : '');
-    const current = els.storeName.value.trim();
-    // Suggest a store name unless the user typed their own.
-    const replaceName = !current || current === suggest(state.loadedFile);
+    state.loadedFile = path;
     setEditor(text, null, `File: ${path}`);
     state.loadedFile = path;
-    if (replaceName) els.storeName.value = suggest(path);
+    setCopying(false);
+    // Suggested name for "Copy to KV store" (the KV controls are hidden while a file is open).
+    els.storeName.value = name.replace(/\.[^.]+$/, '');
     onEditorChange();
     renderFiles();
-    toast(`Opened ${name} — Save to store it in the KV store`);
+    toast(`Opened ${name} (read-only)`);
     showEditorOnPhone();
   }
 
@@ -1110,8 +1118,66 @@
 
   function setSource(source) {
     state.source = source;
-    els.source.textContent = source;
-    els.source.title = source;
+    if (!state.loadedFile) setCopying(false);
+    renderDocBar();
+  }
+
+  /* ---------- Editor header: what is open ---------- */
+  const ICON_FILE = '<svg viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 13h6M9 16.5h4"/></svg>';
+  const ICON_STORE = '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-6"/></svg>';
+
+  function renderDocBar() {
+    const file = state.loadedFile;
+    const fileMode = !!file;
+    els.editorPanel.classList.toggle('file-mode', fileMode);
+    els.docIcon.innerHTML = fileMode ? ICON_FILE : ICON_STORE;
+    els.docSub.replaceChildren();
+    const edited = isDirty();
+    if (fileMode) {
+      const name = file.split('/').pop();
+      // Shorten app IDs so the meaningful end of the path stays visible on small screens.
+      const folder = file.includes('/') ? prettyPath(parentOf(file)).replace(/\b(app-[0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '$1…') : '';
+      els.docKind.textContent = 'Puter file · read-only';
+      els.docTitle.textContent = name;
+      els.docTitle.title = file;
+      els.docSub.append(folder ? `in ${folder}` : 'Opened from the file picker');
+      els.docSub.title = file;
+    } else if (state.loadedName) {
+      els.docKind.textContent = state.app ? `KV store · ${state.app.label}` : 'KV store';
+      els.docTitle.textContent = state.loadedName;
+      els.docTitle.title = state.loadedName;
+      els.docSub.append(edited ? '' : 'Saved');
+      els.docSub.title = '';
+    } else {
+      els.docKind.textContent = state.app ? `KV store · ${state.app.label}` : 'KV store';
+      els.docTitle.textContent = 'New store';
+      els.docTitle.title = '';
+      els.docSub.append('Not saved yet: enter a store name, then Save');
+      els.docSub.title = '';
+    }
+    if (edited && (fileMode || state.loadedName)) {
+      if (els.docSub.textContent) els.docSub.append(' · ');
+      els.docSub.append(Object.assign(document.createElement('span'), {
+        className: 'edited',
+        textContent: fileMode ? 'edited here — the file itself is not changed' : 'unsaved changes',
+      }));
+    }
+    els.saveBtn.textContent = els.editorPanel.classList.contains('copying') ? 'Save to KV store' : 'Save';
+  }
+
+  /** Show or hide the KV controls used to save an open file's content as a store. */
+  function setCopying(on) {
+    els.editorPanel.classList.toggle('copying', !!on && !!state.loadedFile);
+    els.fileCopy.setAttribute('aria-pressed', String(els.editorPanel.classList.contains('copying')));
+    els.fileCopy.textContent = els.editorPanel.classList.contains('copying') ? 'Cancel copy' : 'Copy to KV store…';
+    renderDocBar();
+  }
+
+  function closeFile() {
+    if (isDirty() && !confirm('Close this file and discard your edits?')) return;
+    els.storeName.value = '';
+    els.saveMode.value = 'value';
+    setEditor('', null);
   }
 
   function isDirty() {
@@ -1243,6 +1309,7 @@
     els.size.textContent = formatBytes(new TextEncoder().encode(text).length);
     els.dirty.textContent = isDirty() ? '● Unsaved changes' : '';
     els.mobileNav.querySelector('[data-view="editor"]').classList.toggle('dirty', isDirty());
+    renderDocBar();
     updateCursor();
   }
 
@@ -1251,9 +1318,12 @@
     els.cursor.textContent = `Ln ${line}, Col ${col}`;
   }
 
-  const saveDraft = debounce(() => {
+  function writeDraft() {
     store.set(DRAFT_KEY, { name: els.storeName.value, text: els.editor.value, loadedName: state.loadedName, savedText: state.savedText, mode: els.saveMode.value, source: state.source, loadedFile: state.loadedFile });
-  }, 400);
+  }
+  const saveDraft = debounce(writeDraft, 400);
+  // Don't lose the latest state to the debounce when the page is closed or reloaded.
+  window.addEventListener('pagehide', writeDraft);
 
   const debouncedValidate = debounce(() => {
     const v = validate();
@@ -1445,6 +1515,13 @@
   els.appManual.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectManual(); } });
   for (const b of els.mobileNav.querySelectorAll('button')) b.addEventListener('click', () => setMobileView(b.dataset.view));
   els.newStoreBtn.addEventListener('click', newStore);
+  els.fileReload.addEventListener('click', () => { if (state.loadedFile) openFile(state.loadedFile); });
+  els.fileCopy.addEventListener('click', () => {
+    const on = !els.editorPanel.classList.contains('copying');
+    setCopying(on);
+    if (on) els.storeName.focus();
+  });
+  els.fileClose.addEventListener('click', closeFile);
   els.tabStores.addEventListener('click', () => setSideTab('stores'));
   els.tabFiles.addEventListener('click', () => setSideTab('files'));
   els.pathForm.addEventListener('submit', (e) => { e.preventDefault(); listDir(); });

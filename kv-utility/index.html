@@ -82,7 +82,21 @@
     </aside>
 
     <!-- Editor -->
-    <section class="panel editor-panel">
+    <section id="editor-panel" class="panel editor-panel">
+      <!-- What is open: a KV store or a (read-only) Puter file -->
+      <div id="doc-bar" class="doc-bar">
+        <span id="doc-icon" class="doc-icon" aria-hidden="true"></span>
+        <div class="doc-text">
+          <div id="doc-kind" class="doc-kind"></div>
+          <div id="doc-title" class="doc-title"></div>
+          <div id="doc-sub" class="doc-sub"></div>
+        </div>
+        <div class="doc-actions">
+          <button id="file-reload" type="button" class="btn btn-sm" title="Read the file again">Reload</button>
+          <button id="file-copy" type="button" class="btn btn-sm" title="Save this content as a KV store">Copy to KV store…</button>
+          <button id="file-close" type="button" class="btn btn-sm" title="Close the file">Close</button>
+        </div>
+      </div>
       <div class="store-bar">
         <label for="store-name" class="sr-only">Store name</label>
         <input id="store-name" class="input mono" type="text" placeholder="Store name (key)" autocomplete="off" spellcheck="false">
@@ -134,7 +148,6 @@
         <span id="cursor-pos" class="muted small"></span>
         <span id="size" class="muted small"></span>
         <span id="dirty" class="muted small"></span>
-        <span id="source" class="muted small source"></span>
       </div>
     </section>
   </main>
