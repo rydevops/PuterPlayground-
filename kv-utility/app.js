@@ -733,7 +733,7 @@
   const INDEX_MAX_ITEMS = 50000;
   const INDEX_CONCURRENCY = 6;
   const tree = {
-    nodes: new Map(), // path -> { path, name, isDir, size, children: string[] | null, loading, error, note }
+    nodes: new Map(), // path -> { path, name, isDir, size, children: string[] | null, loading, error }
     expanded: new Set(store.get(PREFS_KEY, {}).expanded || []),
     filterCollapsed: new Set(), // folders the user closed while a search is active
     index: null, // { running, scanned, denied: string[], truncated }
@@ -743,7 +743,7 @@
   function nodeFor(path, info) {
     let n = tree.nodes.get(path);
     if (!n) {
-      n = { path, name: path === ROOT ? '/' : path.split('/').pop(), isDir: true, size: null, children: null, loading: null, error: null, note: null };
+      n = { path, name: path === ROOT ? '/' : path.split('/').pop(), isDir: true, size: null, children: null, loading: null, error: null };
       tree.nodes.set(path, n);
     }
     if (info) Object.assign(n, info);
@@ -786,45 +786,21 @@
     }
   }
 
-  /** List a folder, adding the places Puter tends to hide from websites so they can still be opened. */
+  /**
+   * List a folder. Only what Puter actually returns is shown: no folders are added by the app.
+   * A refused listing is thrown, and the tree then offers Request access for that folder.
+   */
   async function listChildren(path) {
     const home = homePath();
-    let entries;
-    let note = null;
-    try {
-      entries = (await readdirNode(path)).map((it) => toChildEntry(it, path));
-      // Under "/", an entry with an unfamiliar name/path may still be the home folder: compare ids.
-      if (path === ROOT && home && entries.some((f) => f.uid && f.path !== home)) {
-        const homeUid = await puter.fs.stat(home).then((st) => st?.uid || st?.uuid || null).catch(() => null);
-        if (homeUid) entries = entries.map((f) => (f.uid === homeUid ? { ...f, path: home } : f));
-      }
-    } catch (e) {
-      // Puter refuses apps with "Subject does not exist", so treat any failure here as "no access".
-      if (path === ROOT && home) {
-        entries = []; // the root can't be listed; show the home folder anyway
-      } else if (path === home) {
-        // Apps may not list the home folder until the user allows it; still show the standard
-        // folders (each asks for its own access when opened) and offer access to the whole folder.
-        note = { text: "Puter doesn't let apps list your home folder until you allow it, so only its standard folders are shown.", request: path };
-        entries = [];
-      } else if (path === `${home}/AppData`) {
-        const known = [...new Set([window.puter?.appID, ...connectedApps().map((a) => a.uid)].filter(Boolean))];
-        if (!known.length) throw e;
-        note = { text: 'Puter did not allow listing all of AppData, so only the app folders this app can open are shown.', request: path };
-        entries = known.map((uid) => ({ name: uid, path: joinPath(path, uid), isDir: true, size: null }));
-      } else {
-        throw e;
-      }
+    let entries = (await readdirNode(path)).map((it) => toChildEntry(it, path));
+    // Under "/", an entry with an unfamiliar name/path may still be the home folder: compare ids.
+    if (path === ROOT && home && entries.some((f) => f.uid && f.path !== home)) {
+      const homeUid = await puter.fs.stat(home).then((st) => st?.uid || st?.uuid || null).catch(() => null);
+      if (homeUid) entries = entries.map((f) => (f.uid === homeUid ? { ...f, path: home } : f));
     }
     // De-duplicate by path (e.g. the home folder listed twice under different names).
     entries = entries.filter((f, i) => entries.findIndex((g) => g.path === f.path) === i);
-    const ensureDir = (name) => {
-      const p = joinPath(path, name);
-      if (!entries.some((f) => f.path === p)) entries.push({ name, path: p, isDir: true, size: null });
-    };
-    if (path === ROOT && state.username) ensureDir(state.username);
-    if (path === home) { SPECIAL_FOLDERS.forEach(ensureDir); ensureDir('AppData'); ensureDir('Public'); }
-    return { entries: entries.sort(byDirThenName), note };
+    return { entries: entries.sort(byDirThenName) };
   }
 
   /** Load a folder's children into the cache (once). With autoRequest, ask for access to special/app folders. */
@@ -843,7 +819,6 @@
           res = await listChildren(path);
         }
         n.children = res.entries.map((e) => nodeFor(e.path, { name: e.name, isDir: e.isDir, size: e.size, ...(e.uid ? { uid: e.uid } : {}) }).path);
-        n.note = res.note;
         n.error = null;
       } catch (e) {
         n.children = null;
@@ -860,7 +835,7 @@
   /** Forget a folder's contents (and its subfolders') so they are read again. */
   function resetNode(path) {
     for (const [p, n] of tree.nodes) {
-      if (p === path || p.startsWith(path === ROOT ? '/' : `${path}/`)) { n.children = null; n.error = null; n.note = null; }
+      if (p === path || p.startsWith(path === ROOT ? '/' : `${path}/`)) { n.children = null; n.error = null; }
     }
   }
 
@@ -1069,14 +1044,6 @@
       return true;
     };
 
-    // Shown above a folder's contents: why the listing is partial, with a way to fix it.
-    const addFolderNote = (n, depth) => {
-      if (!n.note) return;
-      const li = statusRow(depth, `${n.note.text} `, 'note');
-      if (n.note.request) li.append(requestAccessButton(n.note.request, 'Request access'));
-      frag.append(li);
-    };
-
     const addFolderStatus = (n, depth) => {
       if (n.loading && !n.children) frag.append(statusRow(depth, 'Loading…'));
       if (n.error) {
@@ -1085,7 +1052,7 @@
         if (n.error.canRequest) li.append(requestAccessButton(n.path, 'Request access'));
         frag.append(li);
       }
-      if (n.children && !n.children.length && !n.note) frag.append(statusRow(depth, 'Empty folder', 'empty'));
+      if (n.children && !n.children.length) frag.append(statusRow(depth, 'Empty folder', 'empty'));
     };
 
     // Plain browsing: everything under expanded folders.
@@ -1094,7 +1061,6 @@
       const open = n.isDir && tree.expanded.has(path);
       if (!addRow(n, depth, open, false, false)) return;
       if (!open) return;
-      addFolderNote(n, depth + 1);
       if (n.children) for (const c of n.children) { browse(c, depth + 1); if (truncated) return; }
       addFolderStatus(n, depth + 1);
     };

@@ -74,6 +74,9 @@ test("connecting an app switches the stores to that app's KV data", async ({ pag
 });
 
 test("picking this app opens its own folder in the file tree", async ({ page }) => {
+  // The tree only shows discovered folders, so the home folder and AppData must be readable.
+  await openApp(page, { ...structuredClone(ACCOUNT), granted: [H] });
+  await page.selectOption('#app-select', '__connect__');
   await rows(page).first().locator('button').click();
   await expect(page.locator('#app-dialog')).toBeHidden();
   await expect(page.locator('#pane-files')).toBeVisible();

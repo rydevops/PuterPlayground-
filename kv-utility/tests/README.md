@@ -22,7 +22,7 @@ npm run test:headed               # watch them run in a browser window
 | `kv-stores.spec.js` | Listing, filtering (text and `*` globs), get, save, delete, JSON-text save mode, invalid JSON |
 | `editor.spec.js` | Format, minify, sort keys, escape/unescape, error line and column, tree view, draft after reload |
 | `files-tree.spec.js` | Explorer tree from `/`, hidden entries, expand/collapse, search as you type, wildcard patterns, access requests, opening files read-only, copying a file to a KV store |
-| `app-access.spec.js` | What a new user sees with Puter's real app restrictions and no grants: home's standard folders instead of "Subject does not exist", this app's own files, Public, access prompts, Grant access, app picker |
+| `app-access.spec.js` | Puter's real app restrictions: with no grants the home folder offers Request access and nothing is made up; granting it discovers exactly what's there (hidden folders included); this app's files; access prompts; declined requests; Grant access; app picker |
 | `root-listing.spec.js` | Regression for the home folder "subject does not exist" bug: the home folder in every shape listing `/` can return |
 | `app-picker.spec.js` | Discovering apps, the one-prompt access request, filtering, connecting another app's KV data, this app's own folder, manual app IDs |
 | `mobile.spec.js` | Phone layout: bottom tab bar, tap a store or file to open the editor, unsaved dot, 16px inputs, no overflow at 320 and 360px |
