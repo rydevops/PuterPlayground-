@@ -73,3 +73,13 @@ python3 -m http.server 8080
 All paths are relative, so the app also works from a sub-path such as GitHub Pages (`/<repo>/kv-utility/`).
 
 You will be asked to sign in to Puter the first time you list, get or save a store.
+
+## Running the tests
+
+```sh
+cd kv-utility
+npm install
+npm test
+```
+
+The browser tests use Playwright and a fake Puter.js, so they need no Puter account. See [`tests/README.md`](tests/README.md) for what they cover and how to write new ones.

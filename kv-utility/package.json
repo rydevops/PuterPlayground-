@@ -1,0 +1,13 @@
+{
+  "name": "kv-utility",
+  "private": true,
+  "description": "PWA for the Puter.js key-value store and file system",
+  "scripts": {
+    "start": "node tests/server.js",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
