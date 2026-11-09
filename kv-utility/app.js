@@ -131,7 +131,7 @@
           keys = state.app ? await puter.kv.list('*', kvOpt()) : await puter.kv.list();
         } catch (e) {
           // Access to another app's data may have been revoked: ask again once.
-          if (!state.app || isNotFound(e) || !(await requestAppData(state.app.uid))) throw e;
+          if (!state.app || !(await requestAppData(state.app.uid))) throw e;
           keys = await puter.kv.list('*', kvOpt());
         }
         state.keys = (keys || []).map((k) => (typeof k === 'string' ? k : k.key)).sort((a, b) => a.localeCompare(b));
@@ -372,7 +372,7 @@
             add(a.uid, { name: a.name, title: a.title, host }, 'yours');
           }
         } catch (e) {
-          if (!isNotFound(e)) blocked.push({ resource: 'apps', access: 'read' });
+          blocked.push({ resource: 'apps', access: 'read' });
         }
       })());
     }
@@ -384,7 +384,8 @@
           if (e.isDir && APP_UID_RE.test(e.name)) add(e.name, {}, 'files');
         }
       } catch (e) {
-        if (!isNotFound(e)) blocked.push({ resource: 'fs', path: '~/AppData', access: 'read', create: false });
+        // Puter refuses apps with "Subject does not exist", so any failure means "ask for access".
+        blocked.push({ resource: 'fs', path: '~/AppData', access: 'read', create: false });
       }
     })());
     await Promise.all(tasks);
@@ -607,6 +608,9 @@
     return { resource: 'fs', path, access: 'read', create: false };
   }
 
+  // NOTE: when an app is not allowed to read a folder, Puter answers "Subject does not exist"
+  // (404) on purpose instead of "forbidden", so for folder listings a "not found" error usually
+  // means "no access yet". Only use isNotFound() where a real 404 needs different handling.
   const isNotFound = (e) => /not.?found|does.?not.?exist|no such|subject_does_not_exist/i.test(`${e?.code ?? ''} ${errMsg(e)}`);
 
   /** Ask the user (through Puter's own prompt) to let this site read `path`. */
@@ -795,12 +799,18 @@
         if (homeUid) entries = entries.map((f) => (f.uid === homeUid ? { ...f, path: home } : f));
       }
     } catch (e) {
+      // Puter refuses apps with "Subject does not exist", so treat any failure here as "no access".
       if (path === ROOT && home) {
-        entries = []; // the root usually can't be listed; show the home folder anyway
-      } else if (path === `${home}/AppData` && !isNotFound(e)) {
+        entries = []; // the root can't be listed; show the home folder anyway
+      } else if (path === home) {
+        // Apps may not list the home folder until the user allows it; still show the standard
+        // folders (each asks for its own access when opened) and offer access to the whole folder.
+        note = { text: "Puter doesn't let apps list your home folder until you allow it, so only its standard folders are shown.", request: path };
+        entries = [];
+      } else if (path === `${home}/AppData`) {
         const known = [...new Set([window.puter?.appID, ...connectedApps().map((a) => a.uid)].filter(Boolean))];
         if (!known.length) throw e;
-        note = 'Puter did not allow listing all of AppData, so only the app folders this app can open are shown.';
+        note = { text: 'Puter did not allow listing all of AppData, so only the app folders this app can open are shown.', request: path };
         entries = known.map((uid) => ({ name: uid, path: joinPath(path, uid), isDir: true, size: null }));
       } else {
         throw e;
@@ -813,7 +823,7 @@
       if (!entries.some((f) => f.path === p)) entries.push({ name, path: p, isDir: true, size: null });
     };
     if (path === ROOT && state.username) ensureDir(state.username);
-    if (path === home) { SPECIAL_FOLDERS.forEach(ensureDir); ensureDir('AppData'); }
+    if (path === home) { SPECIAL_FOLDERS.forEach(ensureDir); ensureDir('AppData'); ensureDir('Public'); }
     return { entries: entries.sort(byDirThenName), note };
   }
 
@@ -828,7 +838,7 @@
         try {
           res = await listChildren(path);
         } catch (e) {
-          if (!autoRequest || isNotFound(e) || !(specialFolderOf(path) || appFolderOf(path))) throw e;
+          if (!autoRequest || !(specialFolderOf(path) || appFolderOf(path))) throw e;
           if (!(await requestAccess(path))) throw e;
           res = await listChildren(path);
         }
@@ -837,7 +847,8 @@
         n.error = null;
       } catch (e) {
         n.children = null;
-        n.error = { message: errMsg(e), canRequest: !isNotFound(e) };
+        // "Not found" usually means "no access" for apps (see isNotFound), so always offer access.
+        n.error = { message: errMsg(e), canRequest: path !== ROOT };
       } finally {
         n.loading = null;
       }
@@ -980,6 +991,22 @@
     requestAnimationFrame(() => { renderFileTree.pending = false; doRenderFileTree(); });
   }
 
+  /** A button that asks Puter for read access to `path`, then reads it (and everything under it) again. */
+  function requestAccessButton(path, label) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm';
+    btn.textContent = label;
+    btn.addEventListener('click', async () => {
+      if (!(await requestAccess(path))) return;
+      resetNode(path);
+      await loadNode(path);
+      renderFileTree();
+      startIndex({ restart: true });
+    });
+    return btn;
+  }
+
   function statusRow(depth, text, cls) {
     const li = document.createElement('li');
     li.className = `tree-status-row ${cls || ''}`;
@@ -1042,26 +1069,20 @@
       return true;
     };
 
+    // Shown above a folder's contents: why the listing is partial, with a way to fix it.
+    const addFolderNote = (n, depth) => {
+      if (!n.note) return;
+      const li = statusRow(depth, `${n.note.text} `, 'note');
+      if (n.note.request) li.append(requestAccessButton(n.note.request, 'Request access'));
+      frag.append(li);
+    };
+
     const addFolderStatus = (n, depth) => {
       if (n.loading && !n.children) frag.append(statusRow(depth, 'Loading…'));
-      if (n.note) frag.append(statusRow(depth, n.note, 'note'));
       if (n.error) {
         const li = statusRow(depth, n.error.canRequest ? 'No access yet. ' : `Cannot open ${prettyPath(n.path)}: ${n.error.message}`, 'error');
         li.title = n.path;
-        if (n.error.canRequest) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'btn btn-sm';
-          btn.textContent = 'Request access';
-          btn.addEventListener('click', async () => {
-            if (!(await requestAccess(n.path))) return;
-            resetNode(n.path);
-            await loadNode(n.path);
-            renderFileTree();
-            startIndex({ restart: true });
-          });
-          li.append(btn);
-        }
+        if (n.error.canRequest) li.append(requestAccessButton(n.path, 'Request access'));
         frag.append(li);
       }
       if (n.children && !n.children.length && !n.note) frag.append(statusRow(depth, 'Empty folder', 'empty'));
@@ -1073,6 +1094,7 @@
       const open = n.isDir && tree.expanded.has(path);
       if (!addRow(n, depth, open, false, false)) return;
       if (!open) return;
+      addFolderNote(n, depth + 1);
       if (n.children) for (const c of n.children) { browse(c, depth + 1); if (truncated) return; }
       addFolderStatus(n, depth + 1);
     };

@@ -1,8 +1,13 @@
 // A configurable fake of the parts of Puter.js the KV Utility uses (auth, kv, fs, perms, apps).
 //
 // Tests describe an account with plain data and the mock reproduces Puter's behaviour that
-// matters to the app: per-app KV namespaces, ~/AppData/<app id> folders, relative paths that
-// resolve to this app's folder, and folders that stay unreadable until the user grants access.
+// matters to the app (checked against Puter's backend, src/backend/services/acl/ACLService.ts):
+// - an app may only read its own ~/AppData/<app id> folder, the user's Public folder, and
+//   folders the user has granted; everything else, including the home folder, needs a grant;
+// - Puter hides refusals from apps: a denied app gets 404 "Subject does not exist", never
+//   "forbidden" (hideFromApps), so the app can't tell "no access" from "missing";
+// - listing "/" returns the user's home folder (/<username>);
+// - per-app KV namespaces, relative paths resolving to this app's folder, reads by uid.
 //
 //   await openApp(page, { username: 'tester', files: { '/tester/notes.txt': 'hi' } });
 //   const calls = await mockState(page); // { reqs, kv, granted }
@@ -14,9 +19,11 @@
  * @property {boolean} [signedIn]  Defaults to true.
  * @property {Record<string,string|number[]>} [files]  Absolute path -> text content (or byte array).
  * @property {string[]} [dirs]      Extra (possibly empty) folders; parents are created automatically.
- * @property {string[]} [locked]    Folders that can't be read until access is granted.
- * @property {string[]} [unlistable] Folders whose listing is refused unless access to them is granted.
- * @property {Array|null} [rootList] Raw entries returned when listing "/" (default: refused).
+ * @property {string[]} [granted]   Paths the user has already granted (e.g. ['/tester'] for the whole home).
+ * @property {string[]} [locked]    Folders that need a grant at or below them even when a parent is granted.
+ * @property {string[]} [unlistable] Folders whose listing is refused unless that exact folder is granted.
+ * @property {Array|null} [rootList] Raw entries returned when listing "/" (default: the home folder; null: refused).
+ * @property {boolean} [maskDenials] Refuse with 404 "Subject does not exist" like Puter does for apps (default true).
  * @property {Record<string,Record<string,unknown>>} [kv]  Namespace ('' = this app, or app id) -> key -> value.
  * @property {Array<{uid:string,name:string,title?:string,index_url?:string}>} [apps]  Apps the user created.
  * @property {boolean} [appsLocked] puter.apps.list() refused until 'apps' access is granted (default true).
@@ -30,9 +37,11 @@ const DEFAULTS = {
   signedIn: true,
   files: {},
   dirs: [],
+  granted: [],
   locked: [],
-  unlistable: ['/'],
+  unlistable: [],
   rootList: undefined,
+  maskDenials: true,
   kv: {},
   apps: [],
   appsLocked: true,
@@ -48,7 +57,8 @@ function installPuterMock(cfg) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const err = (code, message) => Object.assign(new Error(message), { code, message });
   const notFound = () => err('subject_does_not_exist', 'Subject does not exist');
-  const forbidden = () => err('forbidden', 'Permission denied');
+  // Puter answers apps with 404 "Subject does not exist" when it refuses them (hideFromApps).
+  const forbidden = () => (cfg.maskDenials ? notFound() : err('forbidden', 'Permission denied'));
   const parentOf = (p) => (p.lastIndexOf('/') <= 0 ? '/' : p.slice(0, p.lastIndexOf('/')));
   const under = (p, prefix) => p === prefix || p.startsWith(prefix === '/' ? '/' : `${prefix}/`);
 
@@ -74,9 +84,16 @@ function installPuterMock(cfg) {
   }
   const byUid = new Map([...entries.values()].map((e) => [e.uid, e.path]));
 
-  const granted = new Set();
+  const granted = new Set(cfg.granted);
   const isGranted = (p) => [...granted].some((g) => under(p, g));
-  const isLocked = (p) => !under(p, OWN) && cfg.locked.some((l) => under(p, l)) && !isGranted(p);
+  // What an app may read: its own AppData folder, the user's Public folder, and granted paths.
+  // A `locked` folder additionally needs a grant at or below it.
+  const allowed = (p) => {
+    if (under(p, OWN) || under(p, `${HOME}/Public`)) return true;
+    if (!isGranted(p)) return false;
+    const lock = cfg.locked.find((l) => under(p, l));
+    return !lock || [...granted].some((g) => under(g, lock) && under(p, g));
+  };
   const state = { reqs: [], granted, kv: cfg.kv, calls: 0 };
 
   // Relative paths and '~' resolve the way Puter.js does for this app.
@@ -99,10 +116,13 @@ function installPuterMock(cfg) {
     state.calls++;
     await sleep(cfg.delay);
     const p = target(arg);
-    if (p === '/' && cfg.rootList !== undefined && cfg.rootList !== null) return cfg.rootList;
+    if (p === '/') {
+      if (cfg.rootList === null) throw forbidden();
+      return cfg.rootList ?? [{ ...entries.get(HOME) }];
+    }
     if (p === null) throw notFound();
-    if (cfg.unlistable.includes(p) && !isGranted(p)) throw forbidden();
-    if (isLocked(p)) throw forbidden();
+    if (cfg.unlistable.includes(p) && !granted.has(p)) throw forbidden();
+    if (!allowed(p)) throw forbidden();
     if (!entries.has(p) || !entries.get(p).is_dir) throw notFound();
     return [...children.get(p)].map((c) => ({ ...entries.get(c) }));
   }
@@ -111,13 +131,14 @@ function installPuterMock(cfg) {
     await sleep(cfg.delay);
     const p = target(arg);
     if (p === null || !content.has(p)) throw notFound();
-    if (isLocked(p)) throw forbidden();
+    if (!allowed(p)) throw forbidden();
     return new Blob([content.get(p)]);
   }
 
   async function stat(arg) {
     const p = target(arg);
     if (p === null || !entries.has(p)) throw notFound();
+    if (!allowed(p)) throw forbidden();
     return { ...entries.get(p) };
   }
 

@@ -14,8 +14,7 @@ const ACCOUNT = {
     [`${H}/AppData/${WEBSITE}/tropical-merge/save.json`]: '{"web":true}',
     [`${H}/AppData/${CREATED}/data.json`]: '{}',
   },
-  unlistable: ['/', `${H}/AppData`],
-  locked: [`${H}/AppData/${CREATED}`, `${H}/AppData/${WEBSITE}`],
+  // Default app restrictions: AppData and other apps' folders need a grant.
   apps: [
     { uid: CREATED, name: 'tropical', title: 'Tropical Merge', index_url: 'https://tropical.puter.site/' },
     { uid: OWN_ID, name: 'kvutil', title: 'KV Utility' },
