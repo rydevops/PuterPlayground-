@@ -800,6 +800,47 @@
   /** Normalise names so "tropical merge" also finds "Tropical_Merge" or "tropical-merge". */
   const squash = (s) => s.toLowerCase().replace(/[\s_\-.]+/g, '');
 
+  const isWildcard = (q) => /[*?]/.test(q);
+
+  /** Turn a wildcard pattern into a case-insensitive RegExp:
+   *  `*` = any characters except `/`, `**` = anything (across folders), `?` = one character. */
+  function wildcardRegex(pattern, anchorStart) {
+    let re = '';
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === '*' && pattern[i + 1] === '*') {
+        // "**/" also matches no folder at all, so "a/**/b" finds "a/b".
+        if (pattern[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+      } else if (c === '*') re += '[^/]*';
+      else if (c === '?') re += '[^/]';
+      else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`${anchorStart ? '^' : '(?:^|/)'}${re}$`, 'i');
+  }
+
+  /**
+   * Build a matcher for the file filter / search box.
+   * - Plain text: forgiving "contains" match that ignores case, spaces, `-`, `_` and `.`.
+   * - With `*` or `?`: a wildcard pattern. Without `/` it matches the name (`*.json`, `save-??.json`);
+   *   with `/` it matches the end of the path (`tropical-merge/*.json`, `AppData/**` + `/save.json`),
+   *   or the whole path when it starts with `/` or `~`.
+   */
+  function nameMatcher(query) {
+    const q = query.trim();
+    if (!q) return () => true;
+    if (!isWildcard(q)) {
+      const sq = squash(q);
+      return (e) => squash(e.name).includes(sq);
+    }
+    if (!q.includes('/')) {
+      const re = wildcardRegex(q, true);
+      return (e) => re.test(e.name);
+    }
+    const absolute = q.startsWith('/') || q.startsWith('~');
+    const re = wildcardRegex((absolute ? expandHome(q) : q).replace(/\/+$/, ''), absolute);
+    return (e) => re.test(e.path);
+  }
+
   function renderFiles() {
     els.fileList.replaceChildren();
     els.fsHint.replaceChildren();
@@ -861,8 +902,8 @@
       li.classList.add('note-row');
       els.fileList.append(li);
     }
-    const q = squash(els.fsFilter.value.trim());
-    const files = q ? state.files.filter((f) => squash(f.name).includes(q)) : state.files;
+    const match = nameMatcher(els.fsFilter.value);
+    const files = els.fsFilter.value.trim() ? state.files.filter(match) : state.files;
     if (!files.length) {
       els.fileList.append(emptyRow(state.cwd === null ? 'Choose a folder above, or enter a path and click “Go”.'
         : state.files.length ? 'Nothing here matches. Press Enter or “Search subfolders” to look deeper.' : 'This folder is empty (or this app cannot see inside it yet).'));
@@ -955,7 +996,7 @@
     cancelSearch();
     const controller = new AbortController();
     searchController = controller;
-    const q = squash(query);
+    const match = nameMatcher(query);
     const s = { query, root, results: [], scanned: 0, done: false, error: null, truncated: false, skipped: [] };
     state.search = s;
     renderFiles();
@@ -967,7 +1008,7 @@
         s.scanned += entries.length;
         for (const e of entries) {
           if (e.isDir) seenDirs.add(e.path);
-          if (s.results.length < SEARCH_MAX_RESULTS && squash(e.name).includes(q) && !s.results.some((r) => r.path === e.path)) s.results.push(e);
+          if (s.results.length < SEARCH_MAX_RESULTS && match(e) && !s.results.some((r) => r.path === e.path)) s.results.push(e);
         }
         if (s.scanned >= SEARCH_MAX_SCANNED) { s.truncated = true; return false; }
         if (Date.now() - lastPaint > 150 && state.search === s) { lastPaint = Date.now(); renderFiles(); }
@@ -991,7 +1032,8 @@
           continue;
         }
         const name = dir.split('/').pop();
-        if (squash(name).includes(q)) s.results.push({ name, path: dir, isDir: true, size: null });
+        const entry = { name, path: dir, isDir: true, size: null };
+        if (match(entry)) s.results.push(entry);
         more = await scan(dir);
       }
     } catch (e) {
