@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Puter KV Utility</title>
   <meta name="description" content="Browse, edit and save JSON stores in the Puter.js key-value store.">
   <meta name="theme-color" content="#1f6feb">
@@ -31,7 +31,7 @@
     </div>
   </header>
 
-  <main class="layout">
+  <main id="layout" class="layout" data-view="stores">
     <!-- Store list -->
     <aside class="panel sidebar">
       <div class="side-tabs" role="tablist">
@@ -49,7 +49,10 @@
       <div id="pane-stores" class="side-pane" role="tabpanel">
         <div class="panel-head">
           <h2>Stores</h2>
-          <button id="refresh-btn" class="btn btn-sm" title="List stores">↻ List</button>
+          <div class="head-actions">
+            <button id="new-store-btn" class="btn btn-sm" title="Start a new store">+ New</button>
+            <button id="refresh-btn" class="btn btn-sm" title="List stores">↻ List</button>
+          </div>
         </div>
         <input id="filter" class="input" type="search" placeholder="Filter (e.g. config:*)" autocomplete="off">
         <ul id="store-list" class="store-list" aria-live="polite"></ul>
@@ -83,9 +86,9 @@
       <div class="store-bar">
         <label for="store-name" class="sr-only">Store name</label>
         <input id="store-name" class="input mono" type="text" placeholder="Store name (key)" autocomplete="off" spellcheck="false">
-        <select id="save-mode" class="input" title="How the value is written to the store">
-          <option value="value">Save as JSON value</option>
-          <option value="string">Save as JSON text (string)</option>
+        <select id="save-mode" class="input" title="How Save writes the value to the store" aria-label="Save format">
+          <option value="value">As JSON value</option>
+          <option value="string">As JSON text (string)</option>
         </select>
         <button id="get-btn" class="btn">Get</button>
         <button id="save-btn" class="btn btn-primary">Save</button>
@@ -139,8 +142,8 @@
   <footer class="footer muted small">
     <span id="app-version">v—</span>
     <button id="check-update" class="link">Check for updates</button>
-    <span class="sep">·</span>
-    <span>Shortcuts: Ctrl+S save · Ctrl+Enter get · Ctrl+Shift+F format</span>
+    <span class="sep shortcuts">·</span>
+    <span class="shortcuts">Shortcuts: Ctrl+S save · Ctrl+Enter get · Ctrl+Shift+F format</span>
   </footer>
 
   <dialog id="app-dialog" class="dialog" aria-labelledby="app-dialog-title">
@@ -166,6 +169,23 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Phone navigation: one section at a time -->
+  <nav id="mobile-nav" class="mobile-nav" aria-label="Sections">
+    <button type="button" data-view="stores" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></svg>
+      <span>Stores</span>
+    </button>
+    <button type="button" data-view="files">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
+      <span>Files</span>
+    </button>
+    <button type="button" data-view="editor">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5c-2.5 0-3 1-3 3v2.5c0 1.3-.8 2-2 2 1.2 0 2 .7 2 2v2.5c0 2 .5 3 3 3M15 4.5c2.5 0 3 1 3 3v2.5c0 1.3.8 2 2 2-1.2 0-2 .7-2 2v2.5c0 2-.5 3-3 3"/></svg>
+      <span>Editor</span>
+      <i class="dot" aria-hidden="true"></i>
+    </button>
+  </nav>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
