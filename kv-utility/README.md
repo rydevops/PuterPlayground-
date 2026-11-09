@@ -10,6 +10,11 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
 - **Puter files (read-only):** the **Files** tab in the sidebar browses your Puter cloud storage.
   - **Quick folders** (Home, Desktop, Documents, Pictures, Videos, Public, AppData), clickable **breadcrumbs**, a path box (`~` is your home folder) and **↑**.
   - **Search subfolders:** type part of a name and press Enter. Matching ignores case, spaces, `-` and `_`, so `tropical merge` also finds `Tropical_Merge`. Searching from Home also covers Desktop, Documents, Pictures and Videos.
+  - **Wildcards** work in both the filter and the search, ignoring case:
+    - `*` matches any characters within a name, `?` matches exactly one character, and `**` matches any number of folders.
+    - Without a `/`, a pattern matches file names: `*.json`, `save-??.json`.
+    - With a `/`, it matches the end of the path: `tropical-merge/*.json`, `Documents/**/save.json`.
+    - Starting with `/` or `~`, it matches the whole path: `~/AppData/*/tropical-merge/save.json`.
   - Click a file to open it in the editor. JSON is pretty-printed, other text opens as-is, and binary files or files over 10 MB are refused. **Pick file…** opens Puter's own file picker instead.
   - A header at the top of the editor always shows what is open. For a store it shows the store name, which app's data it is, and whether there are unsaved changes. For a file it shows the file name, its folder, and that it is read-only.
   - While a file is open, the key-value controls are hidden. The header offers **Reload**, **Copy to KV store…** (pick a store name, then **Save to KV store**) and **Close**. Files themselves are never changed.
