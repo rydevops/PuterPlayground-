@@ -17,7 +17,9 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
   - A header at the top of the editor always shows what is open. For a store it shows the store name, which app's data it is, and whether there are unsaved changes. For a file it shows the file name, its folder, and that it is read-only.
   - While a file is open, the key-value controls are hidden. The header offers **Reload**, **Copy to KV store…** (pick a store name, then **Save to KV store**) and **Close**. Files themselves are never changed.
 
-  **Folder access:** Puter only lets a website read your Desktop, Documents, Pictures, Videos or other folders after you allow it, and **folders you create on the Puter desktop live in `~/Desktop`**.
+  **Folder access:** an app can read only three kinds of folder on its own: its own `~/AppData/<app id>` folder, your `~/Public` folder, and folders you've allowed. Everything else needs your permission first, including your home folder itself. **Folders you create on the Puter desktop live in `~/Desktop`.**
+  - Puter answers a refused app with "Subject does not exist" rather than "permission denied", so the app treats a failed folder as "no access yet" and offers access.
+  - If your home folder can't be listed yet, the tree still shows AppData, Desktop, Documents, Pictures, Public and Videos, with **Request access** for the whole home folder.
   - Expanding Desktop, Documents, Pictures, Videos or an app's folder asks for access automatically.
   - Any other folder that can't be read shows **Request access** in the tree.
   - Folders the background reading couldn't open (and so couldn't search) are listed under the tree, with **Grant access**.

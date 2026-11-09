@@ -26,7 +26,8 @@ for (const [label, rootList] of Object.entries(VARIANTS)) {
       username: U,
       rootList,
       files: { [SAVE]: '{}', [`${H}/notes.txt`]: 'x' },
-      unlistable: ['/', `${H}/AppData`],
+      granted: [H],
+      unlistable: [`${H}/AppData`],
     });
     await openFilesTab(page);
 

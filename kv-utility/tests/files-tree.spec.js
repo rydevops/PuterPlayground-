@@ -19,9 +19,11 @@ const ACCOUNT = {
     [`${H}/Desktop/tropical merge/recipe.json`]: '{"recipe":1}',
     [`${H}/image.bin`]: [0, 159, 146, 150],
   },
-  dirs: [`${H}/Documents/empty`],
+  // Every Puter account has these folders.
+  dirs: [`${H}/Documents/empty`, `${H}/Pictures`, `${H}/Videos`, `${H}/Public`],
+  granted: [H], // these tests browse a home folder the user already allowed (see app-access.spec.js for none)
   locked: [`${H}/Desktop`],
-  unlistable: ['/', `${H}/AppData`],
+  unlistable: [`${H}/AppData`],
 };
 
 test.beforeEach(async ({ page }) => {
@@ -35,7 +37,7 @@ test('starts at the root with the home folder open, listing hidden entries', asy
   expect(rows.slice(0, 2).map((r) => [r.path, r.open, r.tag])).toEqual([['/', true, null], [H, true, 'home']]);
   const home = rows.filter((r) => r.depth === 2).map((r) => r.name);
   // Puter's special folders are always listed under home, plus hidden entries.
-  expect(home).toEqual(['.config', 'AppData', 'Desktop', 'Documents', 'Pictures', 'Videos', '.profile', 'image.bin', 'notes.txt']);
+  expect(home).toEqual(['.config', 'AppData', 'Desktop', 'Documents', 'Pictures', 'Public', 'Videos', '.profile', 'image.bin', 'notes.txt']);
   expect(rows.find((r) => r.name === '.config').hidden).toBe(true);
   expect(rows.find((r) => r.name === '.profile').hidden).toBe(true);
 });

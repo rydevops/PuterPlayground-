@@ -22,6 +22,7 @@ npm run test:headed               # watch them run in a browser window
 | `kv-stores.spec.js` | Listing, filtering (text and `*` globs), get, save, delete, JSON-text save mode, invalid JSON |
 | `editor.spec.js` | Format, minify, sort keys, escape/unescape, error line and column, tree view, draft after reload |
 | `files-tree.spec.js` | Explorer tree from `/`, hidden entries, expand/collapse, search as you type, wildcard patterns, access requests, opening files read-only, copying a file to a KV store |
+| `app-access.spec.js` | What a new user sees with Puter's real app restrictions and no grants: home's standard folders instead of "Subject does not exist", this app's own files, Public, access prompts, Grant access, app picker |
 | `root-listing.spec.js` | Regression for the home folder "subject does not exist" bug: the home folder in every shape listing `/` can return |
 | `app-picker.spec.js` | Discovering apps, the one-prompt access request, filtering, connecting another app's KV data, this app's own folder, manual app IDs |
 | `mobile.spec.js` | Phone layout: bottom tab bar, tap a store or file to open the editor, unsaved dot, 16px inputs, no overflow at 320 and 360px |
@@ -35,14 +36,16 @@ npm run test:headed               # watch them run in a browser window
 await openApp(page, {
   username: 'tester',
   files: { '/tester/Documents/notes.txt': 'hello' },   // parent folders are created for you
-  locked: ['/tester/Desktop'],                          // unreadable until access is granted
-  unlistable: ['/', '/tester/AppData'],                 // listing refused (Puter's usual behaviour)
+  granted: ['/tester'],                                  // folders the user already allowed (default: none)
+  locked: ['/tester/Desktop'],                          // still needs its own grant
   kv: { '': { mine: 1 }, 'app-…': { theirs: 2 } },      // '' is this app's namespace
 });
 const { reqs, kv, granted } = await mockState(page);    // what the app asked for and stored
 ```
 
-It follows the Puter behaviour the app depends on:
+By default it applies Puter's real restrictions for apps, as checked against Puter's backend (`ACLService`). An app may read only its own `~/AppData/<app id>` folder, the user's `Public` folder and granted folders. Refusals come back as 404 "Subject does not exist", never "forbidden". Pass `granted: ['/tester']` when a test needs a home folder the user has already allowed.
+
+It also follows the rest of the Puter behaviour the app depends on:
 - per-app key-value namespaces;
 - `~/AppData/<app id>` folders, with relative paths resolving to this app's folder;
 - reading folders and files by uid;

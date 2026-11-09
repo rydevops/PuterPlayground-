@@ -7,7 +7,6 @@ const OWN = `/tester/AppData/${DEFAULTS.appID}`;
 const ACCOUNT = {
   kv: { '': { 'game-state': { lvl: 3 } } },
   files: { [`${OWN}/tropical-merge/save.json`]: '{"score":1}' },
-  unlistable: ['/', '/tester/AppData'],
 };
 // iPhone 13 viewport, touch and user agent, but in Chromium like the rest of the suite.
 const { defaultBrowserType, ...IPHONE } = devices['iPhone 13'];
