@@ -750,13 +750,50 @@
     store.set(PREFS_KEY, { ...store.get(PREFS_KEY, {}), expanded: [...tree.expanded] });
   }
 
+  /**
+   * Turn a raw readdir entry into a tree entry whose path is reliably usable.
+   * Puter can describe entries in other forms than the plain absolute path we navigate with
+   * (e.g. the home folder listed under "/" as "/user/", "~" or with a display name), so:
+   * normalise the given path, rebuild it from the parent folder + name when it doesn't sit
+   * directly inside that folder, and always map the user's own home folder to /<username>.
+   * The entry's uid is kept as a fallback for reading it if the path still isn't found.
+   */
+  function toChildEntry(it, dir) {
+    const e = toEntry(it, dir);
+    const home = homePath();
+    let given = typeof it.path === 'string' ? it.path.trim() : '';
+    if (given === '~' || given.startsWith('~/')) given = expandHome(given);
+    if (given.length > 1) given = given.replace(/\/+$/, '');
+    let path = given.startsWith('/') && parentOf(given) === dir && given.split('/').pop() === e.name
+      ? given
+      : joinPath(dir, e.name);
+    if (dir === ROOT && home && (e.name === state.username || given === home)) path = home;
+    return { ...e, path, uid: it.uid || it.uuid || null };
+  }
+
+  /** readdir by path, falling back to the folder's uid when the path is not found. */
+  async function readdirNode(path) {
+    try {
+      return await readdirAny(path);
+    } catch (e) {
+      const uid = tree.nodes.get(path)?.uid;
+      if (!uid || !isNotFound(e)) throw e;
+      return (await puter.fs.readdir({ uid })) || [];
+    }
+  }
+
   /** List a folder, adding the places Puter tends to hide from websites so they can still be opened. */
   async function listChildren(path) {
     const home = homePath();
     let entries;
     let note = null;
     try {
-      entries = (await readdirAny(path)).map((it) => toEntry(it, path));
+      entries = (await readdirNode(path)).map((it) => toChildEntry(it, path));
+      // Under "/", an entry with an unfamiliar name/path may still be the home folder: compare ids.
+      if (path === ROOT && home && entries.some((f) => f.uid && f.path !== home)) {
+        const homeUid = await puter.fs.stat(home).then((st) => st?.uid || st?.uuid || null).catch(() => null);
+        if (homeUid) entries = entries.map((f) => (f.uid === homeUid ? { ...f, path: home } : f));
+      }
     } catch (e) {
       if (path === ROOT && home) {
         entries = []; // the root usually can't be listed; show the home folder anyway
@@ -769,8 +806,11 @@
         throw e;
       }
     }
+    // De-duplicate by path (e.g. the home folder listed twice under different names).
+    entries = entries.filter((f, i) => entries.findIndex((g) => g.path === f.path) === i);
     const ensureDir = (name) => {
-      if (!entries.some((f) => f.name === name)) entries.push({ name, path: joinPath(path, name), isDir: true, size: null });
+      const p = joinPath(path, name);
+      if (!entries.some((f) => f.path === p)) entries.push({ name, path: p, isDir: true, size: null });
     };
     if (path === ROOT && state.username) ensureDir(state.username);
     if (path === home) { SPECIAL_FOLDERS.forEach(ensureDir); ensureDir('AppData'); }
@@ -792,7 +832,7 @@
           if (!(await requestAccess(path))) throw e;
           res = await listChildren(path);
         }
-        n.children = res.entries.map((e) => nodeFor(e.path, { name: e.name, isDir: e.isDir, size: e.size }).path);
+        n.children = res.entries.map((e) => nodeFor(e.path, { name: e.name, isDir: e.isDir, size: e.size, ...(e.uid ? { uid: e.uid } : {}) }).path);
         n.note = res.note;
         n.error = null;
       } catch (e) {
@@ -1006,7 +1046,8 @@
       if (n.loading && !n.children) frag.append(statusRow(depth, 'Loading…'));
       if (n.note) frag.append(statusRow(depth, n.note, 'note'));
       if (n.error) {
-        const li = statusRow(depth, n.error.canRequest ? 'No access yet. ' : `Cannot open: ${n.error.message}`, 'error');
+        const li = statusRow(depth, n.error.canRequest ? 'No access yet. ' : `Cannot open ${prettyPath(n.path)}: ${n.error.message}`, 'error');
+        li.title = n.path;
         if (n.error.canRequest) {
           const btn = document.createElement('button');
           btn.type = 'button';
@@ -1126,9 +1167,12 @@
       try {
         blob = await puter.fs.read(path);
       } catch (e) {
+        // Fall back to this app's relative path, then to the file's uid from the tree.
         const rel = ownRelative(path);
-        if (rel === null) throw e;
-        blob = await puter.fs.read(rel);
+        const uid = tree.nodes.get(path)?.uid;
+        if (rel !== null) blob = await puter.fs.read(rel).catch(() => null);
+        if (!blob && uid && isNotFound(e)) blob = await puter.fs.read(uid);
+        if (!blob) throw e;
       }
       loadFileText(await blobToText(blob, path.split('/').pop()), path);
     } catch (e) {
