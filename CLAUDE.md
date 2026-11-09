@@ -6,6 +6,7 @@ Guidance for Claude when working in this repository.
 
 - **Always create a new branch for each new request to change the code.** Start it from the latest `main`. If the request is only an informational question, don't create a branch.
 - **Always open a pull request after making a code change on a new branch.**
+- **Always put the pull request link at the very end of your final reply**, so it can be found without scrolling back up.
 
 ## Project notes
 
