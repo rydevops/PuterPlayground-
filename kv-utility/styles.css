@@ -263,3 +263,9 @@ body {
 .manual-row .input { flex: 1; }
 .dialog-actions { display: flex; justify-content: flex-end; }
 .app-results li button .sub.peek { font-family: inherit; font-style: italic; }
+
+.store-list li button .tag {
+  margin-right: 6px; padding: 0 6px; border: 1px solid currentColor; border-radius: 999px;
+  font-family: system-ui, sans-serif; font-size: 10.5px; opacity: .8;
+}
+.store-list .note-row { color: var(--warn); }

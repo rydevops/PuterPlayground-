@@ -17,6 +17,10 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
   - Opening one of those folders asks for access automatically.
   - A search lists the folders it couldn't check, with a **Grant access and search again** button.
   - **Request access to this folder** below the list covers any other folder.
+- **This app's files:** the **This app's files** chip opens `~/AppData/<this app's id>`. Apps served from the same site share one app ID, and so share the same folder and key-value store. For example, a file another app on the same site saved with `puter.fs.write('tropical-merge/save.json', …)` is at `This app's files › tropical-merge › save.json`.
+  - If Puter won't list all of `~/AppData`, the AppData folder still shows the app folders this app can open.
+  - Picking this app in the app picker, or entering its ID, opens its folder.
+  - A search from Home includes this folder.
 - **Other apps' data:** every Puter app, including every website that uses Puter.js, has its own key-value namespace and its own folder, `~/AppData/<app id>`.
   - A relative path such as `puter.fs.write('tropical-merge/save.json', …)` is saved in that folder.
   - To work with another app's data, choose **Data from → Connect another app…**. A picker lists the apps on your account, found in two places:

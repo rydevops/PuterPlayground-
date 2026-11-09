@@ -90,6 +90,7 @@
       try {
         const user = await puter.auth.getUser();
         state.username = user?.username || null;
+        renderQuickFolders();
         els.userLabel.textContent = user?.username ? `@${user.username}` : '';
       } catch { els.userLabel.textContent = ''; }
     } else {
@@ -339,13 +340,14 @@
     const found = new Map();
     const blocked = [];
     const add = (uid, info, source) => {
-      if (!uid || uid === puter.appID) return;
+      if (!uid) return;
       const cur = found.get(uid) || { uid, sources: new Set() };
       Object.assign(cur, Object.fromEntries(Object.entries(info).filter(([, v]) => v)));
       cur.sources.add(source);
       found.set(uid, cur);
     };
 
+    if (puter.appID) add(puter.appID, { saved: 'This app (KV Utility)' }, 'this');
     for (const a of connectedApps()) add(a.uid, { saved: a.label }, 'connected');
 
     const tasks = [];
@@ -376,11 +378,11 @@
     await Promise.all(tasks);
 
     // Peek inside each app's folder so unnamed website apps can be recognised by their files.
-    const withFiles = [...found.values()].filter((a) => a.sources.has('files'));
+    const withFiles = [...found.values()].filter((a) => a.sources.has('files') || a.sources.has('this'));
     for (let i = 0; i < withFiles.length; i += 6) {
       await Promise.all(withFiles.slice(i, i + 6).map(async (a) => {
         try {
-          const items = (await puter.fs.readdir(`${homePath()}/AppData/${a.uid}`)) || [];
+          const items = await readdirAny(`${homePath()}/AppData/${a.uid}`);
           a.peek = items.map((it) => it.name).sort((x, y) => x.localeCompare(y));
         } catch { /* no access to this app's folder yet */ }
       }));
@@ -390,8 +392,8 @@
       ...a,
       label: a.title || a.name || a.saved || (a.peek?.length ? `App with ${a.peek[0]}${a.peek.length > 1 ? ` +${a.peek.length - 1}` : ''}` : appLabel(a)),
     }));
-    // Named apps first, then by label.
-    apps.sort((a, b) => (!!(b.title || b.name || b.saved) - !!(a.title || a.name || a.saved)) || a.label.localeCompare(b.label));
+    // This app first, then named apps, then by label.
+    apps.sort((a, b) => (b.sources.has('this') - a.sources.has('this')) || (!!(b.title || b.name || b.saved) - !!(a.title || a.name || a.saved)) || a.label.localeCompare(b.label));
     return { apps, blocked };
   }
 
@@ -428,6 +430,7 @@
       if (a.uid === state.app?.uid) b.classList.add('current');
       b.append(document.createTextNode(a.label));
       const tags = [];
+      if (a.sources.has('this')) tags.push('this app — any other app on the same site shares this ID and data');
       if (a.sources.has('yours')) tags.push('your app');
       if (a.sources.has('files')) tags.push('has files');
       if (a.sources.has('connected')) tags.push('connected');
@@ -437,12 +440,13 @@
         const shown = a.peek.slice(0, 4).join(', ') + (a.peek.length > 4 ? `, +${a.peek.length - 4} more` : '');
         b.append(Object.assign(document.createElement('span'), { className: 'sub peek', textContent: a.peek.length ? `contains: ${shown}` : 'folder is empty' }));
       }
+      if (a.sources.has('this') && !state.app) b.classList.add('current');
       b.addEventListener('click', () => connectByUid(a.uid, a.label));
       li.append(b);
       els.appResults.append(li);
     }
     if (!apps.length) {
-      els.appResults.append(emptyRow(discovery.apps.length ? 'No apps match the filter.' : 'No other apps found yet.'));
+      els.appResults.append(emptyRow(discovery.apps.length ? 'No apps match the filter.' : 'No apps found yet.'));
     }
     const n = discovery.apps.length;
     els.appStatus.textContent = `${n} app${n === 1 ? '' : 's'} found.`
@@ -464,8 +468,16 @@
 
   async function connectByUid(uid, label) {
     if (uid === puter.appID) {
-      toast('That is this app — choose "This app" instead', true);
-      return false;
+      // Same app ID as the KV Utility (e.g. another app on the same site): its data is this app's own data.
+      if (els.appDialog.open) els.appDialog.close();
+      if (state.app) await switchApp('');
+      if (state.app) return false; // switch cancelled
+      els.fsPath.value = `~/AppData/${uid}`;
+      const willList = state.cwd === null && els.paneFiles.hidden; // setSideTab lists fsPath itself then
+      setSideTab('files');
+      if (!willList) listDir(`~/AppData/${uid}`);
+      toast("That app shares this app's ID, so its stores and files are this app's own");
+      return true;
     }
     if (!(await requestAppData(uid))) return false;
     const apps = connectedApps().filter((a) => a.uid !== uid);
@@ -626,8 +638,39 @@
     }
   }
 
+  /** This app's own folder, ~/AppData/<this app's id>. Apps on the same site share one id and one folder. */
+  const ownAppDir = () => (window.puter?.appID && state.username ? `/${state.username}/AppData/${puter.appID}` : null);
+
+  /** `path` relative to this app's folder (how Puter.js resolves relative paths), or null if it is outside it. */
+  function ownRelative(path) {
+    const own = ownAppDir();
+    if (!own || (path !== own && !path.startsWith(`${own}/`))) return null;
+    return path === own ? '.' : path.slice(own.length + 1);
+  }
+
+  /** readdir with a fallback to the relative form for this app's own folder. */
+  async function readdirAny(target) {
+    try {
+      return (await puter.fs.readdir(target)) || [];
+    } catch (e) {
+      const rel = ownRelative(target);
+      if (rel === null) throw e;
+      return (await puter.fs.readdir(rel)) || [];
+    }
+  }
+
   async function readFolder(target) {
-    const files = ((await puter.fs.readdir(target)) || []).map((it) => toEntry(it, target));
+    let files;
+    try {
+      files = (await readdirAny(target)).map((it) => toEntry(it, target));
+    } catch (e) {
+      // Puter usually won't let an app list ~/AppData itself; still show the app folders it can open.
+      if (target !== `${homePath()}/AppData` || isNotFound(e)) throw e;
+      const known = [puter.appID, ...connectedApps().map((a) => a.uid)].filter(Boolean);
+      if (!known.length) throw e;
+      state.listNote = 'Only showing folders this app can open: Puter did not allow listing all of AppData. Use “Request access to this folder” to see every app.';
+      return [...new Set(known)].map((uid) => ({ name: uid, path: joinPath(target, uid), isDir: true, size: null }));
+    }
     // Puter hides special folders from websites that have no access yet; always show them in Home
     // so they can be opened (which asks for access).
     if (target === homePath()) {
@@ -645,6 +688,7 @@
     cancelSearch();
     state.search = null;
     state.listError = null;
+    state.listNote = null;
     els.fsPath.value = prettyPath(target);
     els.fileList.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: 'Loading…' }));
     try {
@@ -673,11 +717,12 @@
     els.quickFolders.replaceChildren();
     const chips = QUICK_FOLDERS.map((p) => [p === '~' ? 'Home' : p.slice(2), p]);
     if (state.app) chips.unshift([`${state.app.label} files`, `~/AppData/${state.app.uid}`]);
+    else if (window.puter?.appID) chips.unshift(["This app's files", `~/AppData/${puter.appID}`]);
     for (const [label, p] of chips) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'chip';
-      if (state.app && p.endsWith(state.app.uid)) b.classList.add('chip-app');
+      if (p.endsWith(state.app?.uid ?? '\u0000') || (!state.app && window.puter?.appID && p.endsWith(puter.appID))) b.classList.add('chip-app');
       b.textContent = label;
       b.title = p;
       b.addEventListener('click', () => listDir(p));
@@ -713,7 +758,9 @@
     if (f.isDir) b.classList.add('dir');
     if (f.path === state.loadedFile) b.classList.add('current');
     if (!f.isDir && f.size !== null) b.append(Object.assign(document.createElement('span'), { className: 'meta', textContent: formatBytes(f.size) }));
-    b.append(Object.assign(document.createElement('span'), { className: 'icon', textContent: f.isDir ? '📁' : '📄' }), document.createTextNode(f.name));
+    b.append(Object.assign(document.createElement('span'), { className: 'icon', textContent: f.isDir ? '📁' : '📄' }));
+    if (f.isDir && f.path === ownAppDir()) b.append(Object.assign(document.createElement('span'), { className: 'tag', textContent: 'this app' }));
+    b.append(document.createTextNode(f.name));
     if (showPath) b.append(Object.assign(document.createElement('span'), { className: 'sub', textContent: prettyPath(parentOf(f.path)) }));
     b.addEventListener('click', () => (f.isDir ? listDir(f.path) : openFile(f.path)));
     return b;
@@ -796,6 +843,11 @@
       return;
     }
 
+    if (state.listNote) {
+      const li = emptyRow(state.listNote);
+      li.classList.add('note-row');
+      els.fileList.append(li);
+    }
     const q = squash(els.fsFilter.value.trim());
     const files = q ? state.files.filter((f) => squash(f.name).includes(q)) : state.files;
     if (!files.length) {
@@ -818,7 +870,7 @@
     p.className = 'muted small';
     p.append('Missing a folder? ');
     if (state.cwd === home) {
-      p.append('Files an app saves with a relative path are in AppData/<app id>: pick that app under “Data from”. ');
+      p.append('Files an app saves with a relative path are in AppData/<app id> (“This app\'s files” for apps on the same site; otherwise pick the app under “Data from”). ');
       p.append('Folders on your Puter desktop are inside ');
       const d = document.createElement('button');
       d.type = 'button';
@@ -851,6 +903,8 @@
     let yielded = false;
     try {
       const iter = puter.fs.readdir({ path: root, recursive: true, depth: SEARCH_MAX_DEPTH, stream: true });
+      // Older Puter.js returns a promise here instead of an iterator; don't leave its rejection unhandled.
+      if (iter && typeof iter.then === 'function') iter.catch(() => {});
       if (iter && typeof iter[Symbol.asyncIterator] === 'function') {
         for await (const page of iter) {
           if (signal.aborted) return;
@@ -869,7 +923,7 @@
       const next = [];
       for (let i = 0; i < level.length && !signal.aborted; i += 6) {
         const batch = await Promise.all(level.slice(i, i + 6).map(async (dir) => {
-          try { return (await puter.fs.readdir(dir) || []).map((it) => toEntry(it, dir)); } catch { return []; }
+          try { return (await readdirAny(dir)).map((it) => toEntry(it, dir)); } catch { return []; }
         }));
         for (const entries of batch) {
           next.push(...entries.filter((e) => e.isDir).map((e) => e.path));
@@ -912,13 +966,13 @@
       // Special folders are often missing from the home listing, so search them directly too.
       const home = homePath();
       const extra = root === home || root === '/'
-        ? [...SPECIAL_FOLDERS.map((n) => joinPath(home, n)), ...connectedApps().map((a) => `${home}/AppData/${a.uid}`)]
+        ? [...SPECIAL_FOLDERS.map((n) => joinPath(home, n)), ownAppDir(), ...connectedApps().map((a) => `${home}/AppData/${a.uid}`)].filter(Boolean)
         : [];
       for (const dir of extra) {
         if (!more || controller.signal.aborted) break;
         if (seenDirs.has(dir)) continue;
         try {
-          await puter.fs.readdir(dir);
+          await readdirAny(dir);
         } catch (e) {
           if (!isNotFound(e)) s.skipped.push(dir);
           continue;
@@ -966,7 +1020,14 @@
     if (isDirty() && !confirm('You have unsaved changes. Discard them and open this file?')) return;
     if (!(await ensureSignedIn())) return;
     try {
-      const blob = await puter.fs.read(path);
+      let blob;
+      try {
+        blob = await puter.fs.read(path);
+      } catch (e) {
+        const rel = ownRelative(path);
+        if (rel === null) throw e;
+        blob = await puter.fs.read(rel);
+      }
       loadFileText(await blobToText(blob, path.split('/').pop()), path);
     } catch (e) {
       toast(`Cannot read file: ${errMsg(e)}`, true);
