@@ -8,7 +8,7 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
 
 - **Stores:** type a store name, then **Get**, **Save**, **New** or **Delete**. **↻ List** lists every store, and the filter box takes a substring or a glob (`config:*`).
 - **Puter files (read-only):** the **Files** tab shows your Puter storage as an explorer tree that starts at the root (`/`), with your home folder already open.
-  - **Browsing:** click or tap a folder to expand or collapse it; its contents load the first time it opens. Click or tap a file to open it in the editor. Everything is listed, including hidden dot-files and dot-folders, which are dimmed.
+  - **Browsing:** click or tap a folder to expand or collapse it; its contents load the first time it opens. Click or tap a file to open it in the editor. The tree shows only what Puter returns when a folder is listed; the app never adds folders of its own. Everything returned is listed, including hidden dot-files and dot-folders, which are dimmed.
   - **Toolbar:** **⊟** collapses every folder, **↻** reads the folders again, and **Pick file…** opens Puter's own file picker.
   - **Search as you type:** every keystroke filters the whole tree down to the files and folders that match, plus the folders that lead to them. To make that work for folders you haven't opened yet, the app reads every folder it can in the background when the Files tab opens, and results fill in as it goes. Escape clears the search.
     - Plain text matches part of a name, ignoring case, spaces, `-` and `_`, so `tropical merge` also finds `Tropical_Merge`.
@@ -19,12 +19,11 @@ Each **store** is a key in your Puter KV space, and its value is a JSON document
 
   **Folder access:** an app can read only three kinds of folder on its own: its own `~/AppData/<app id>` folder, your `~/Public` folder, and folders you've allowed. Everything else needs your permission first, including your home folder itself. **Folders you create on the Puter desktop live in `~/Desktop`.**
   - Puter answers a refused app with "Subject does not exist" rather than "permission denied", so the app treats a failed folder as "no access yet" and offers access.
-  - If your home folder can't be listed yet, the tree still shows AppData, Desktop, Documents, Pictures, Public and Videos, with **Request access** for the whole home folder.
+  - A folder that can't be listed yet, including your home folder the first time, shows **Request access** instead of its contents. Once you allow it, its real contents are listed.
   - Expanding Desktop, Documents, Pictures, Videos or an app's folder asks for access automatically.
   - Any other folder that can't be read shows **Request access** in the tree.
   - Folders the background reading couldn't open (and so couldn't search) are listed under the tree, with **Grant access**.
 - **This app's files:** apps served from the same site share one app ID, and so share the same folder, `~/AppData/<app id>` (tagged "this app" in the tree), and the same key-value store. For example, a file another app on the same site saved with `puter.fs.write('tropical-merge/save.json', …)` is at `AppData › <app id> › tropical-merge › save.json`.
-  - If Puter won't list all of `~/AppData`, the AppData folder still shows the app folders this app can open.
   - Picking this app in the app picker, or entering its ID, opens its folder in the tree.
 - **Other apps' data:** every Puter app, including every website that uses Puter.js, has its own key-value namespace and its own folder, `~/AppData/<app id>`.
   - A relative path such as `puter.fs.write('tropical-merge/save.json', …)` is saved in that folder.

@@ -11,7 +11,6 @@ const HUID = `uid:${H}`; // the mock's uid for the home folder
 const SAVE = `${H}/AppData/${DEFAULTS.appID}/tropical-merge/save.json`;
 
 const VARIANTS = {
-  'root cannot be listed': null,
   'clean path': [{ name: U, path: H, is_dir: true, uid: HUID }],
   'trailing slash': [{ name: U, path: `${H}/`, is_dir: true, uid: HUID }],
   'tilde path': [{ name: U, path: '~', is_dir: true, uid: HUID }],
@@ -27,7 +26,6 @@ for (const [label, rootList] of Object.entries(VARIANTS)) {
       rootList,
       files: { [SAVE]: '{}', [`${H}/notes.txt`]: 'x' },
       granted: [H],
-      unlistable: [`${H}/AppData`],
     });
     await openFilesTab(page);
 
@@ -35,7 +33,7 @@ for (const [label, rootList] of Object.entries(VARIANTS)) {
     const homes = rows.filter((r) => r.depth === 1);
     expect(homes).toHaveLength(1);
     expect(homes[0]).toMatchObject({ path: H, open: true, tag: 'home' });
-    for (const name of ['AppData', 'Desktop', 'Documents', 'notes.txt']) {
+    for (const name of ['AppData', 'notes.txt']) {
       expect(rows.some((r) => r.path === `${H}/${name}`)).toBe(true);
     }
     await expect(page.locator('#file-list')).not.toContainText('does not exist');

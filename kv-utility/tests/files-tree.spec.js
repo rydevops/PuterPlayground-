@@ -23,7 +23,6 @@ const ACCOUNT = {
   dirs: [`${H}/Documents/empty`, `${H}/Pictures`, `${H}/Videos`, `${H}/Public`],
   granted: [H], // these tests browse a home folder the user already allowed (see app-access.spec.js for none)
   locked: [`${H}/Desktop`],
-  unlistable: [`${H}/AppData`],
 };
 
 test.beforeEach(async ({ page }) => {
@@ -51,11 +50,14 @@ test('expands and collapses folders on click', async ({ page }) => {
   await expect(node(page, `${H}/Documents/a`)).toHaveCount(0);
 });
 
-test('AppData shows the folders this app can open when it cannot be listed', async ({ page }) => {
+test('a folder that cannot be listed offers Request access and shows nothing made up', async ({ page }) => {
+  await openApp(page, { ...structuredClone(ACCOUNT), unlistable: [`${H}/AppData`] });
+  await openFilesTab(page);
   await node(page, `${H}/AppData`).click();
-  await expect(node(page, OWN)).toBeVisible();
+  await expect(page.locator('#file-list .tree-status-row.error')).toContainText('No access yet.');
+  await expect(node(page, OWN)).toHaveCount(0);
+  await page.click('#file-list .tree-status-row.error button:text("Request access")');
   await expect(node(page, OWN)).toContainText('this app');
-  await expect(page.locator('#file-list')).toContainText('Puter did not allow listing all of AppData');
 });
 
 test('filters the whole tree as you type', async ({ page }) => {
