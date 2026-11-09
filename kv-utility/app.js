@@ -15,7 +15,7 @@
     updateDismiss: $('update-dismiss'), checkUpdate: $('check-update'), version: $('app-version'),
     tabStores: $('tab-stores'), tabFiles: $('tab-files'), paneStores: $('pane-stores'), paneFiles: $('pane-files'),
     fsFilter: $('fs-filter'), refreshTreeBtn: $('refresh-tree-btn'), collapseBtn: $('collapse-btn'),
-    fileList: $('file-list'), fileCount: $('file-count'), pickFileBtn: $('pick-file-btn'),
+    fileList: $('file-list'), fileCount: $('file-count'),
     appSelect: $('app-select'), appForget: $('app-forget'), appNote: $('app-note'),
     appDialog: $('app-dialog'), appSearch: $('app-search'), appStatus: $('app-status'), appResults: $('app-results'),
     appAllow: $('app-allow'), appManual: $('app-manual'), appManualGo: $('app-manual-go'),
@@ -1168,25 +1168,6 @@
     }
   }
 
-  async function pickFile() {
-    if (isDirty() && !confirm('You have unsaved changes. Discard them and open another file?')) return;
-    if (!(await ensureSignedIn())) return;
-    try {
-      let item = await puter.ui.showOpenFilePicker();
-      if (Array.isArray(item)) item = item[0];
-      if (!item) return;
-      const blob = item.read ? await item.read() : await puter.fs.read(item.path);
-      loadFileText(await blobToText(blob, item.name), item.path || item.name);
-      if (item.path) {
-        const dir = parentOf(item.path);
-        revealPath(item.path);
-      }
-    } catch (e) {
-      if (e?.name === 'AbortError' || /cancel/i.test(errMsg(e))) return;
-      toast(`Cannot open file: ${errMsg(e)}`, true);
-    }
-  }
-
   function setSideTab(tab) {
     const files = tab === 'files';
     els.paneStores.hidden = files;
@@ -1662,7 +1643,6 @@
     saveExpanded();
     renderFileTree();
   });
-  els.pickFileBtn.addEventListener('click', pickFile);
   els.storeName.addEventListener('keydown', (e) => { if (e.key === 'Enter') getStore(); });
   els.storeName.addEventListener('input', saveDraft);
   els.saveMode.addEventListener('change', saveDraft);

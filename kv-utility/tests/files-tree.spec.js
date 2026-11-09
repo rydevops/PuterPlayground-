@@ -157,6 +157,10 @@ test('refuses binary files', async ({ page }) => {
   await expect(page.locator('#toast')).toContainText("looks like a binary file");
 });
 
+test('the toolbar has collapse all and refresh only (no file picker)', async ({ page }) => {
+  await expect(page.locator('#pane-files .head-actions button')).toHaveText(['⊟', '↻']);
+});
+
 test('collapse all and refresh', async ({ page }) => {
   await node(page, `${H}/Documents`).click();
   await expect(node(page, `${H}/Documents/a`)).toBeVisible();

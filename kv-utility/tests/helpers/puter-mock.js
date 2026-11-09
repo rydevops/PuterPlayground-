@@ -193,13 +193,6 @@ function installPuterMock(cfg) {
         return a;
       },
     },
-    ui: {
-      showOpenFilePicker: async () => {
-        const p = cfg.pickFile;
-        if (!p) throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
-        return { name: p.split('/').pop(), path: p, read: async () => new Blob([content.get(p)]) };
-      },
-    },
   };
 }
 
